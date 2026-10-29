@@ -312,8 +312,12 @@
   .ncard:hover { border-color: var(--faint); }
   .ncard.open { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px 12px; cursor: default; border-color: color-mix(in srgb, var(--sc) 40%, var(--line)); }
   .ncard.dragging { opacity: .4; }
-  .ncard.drop-before::before, .ncard.drop-after::after { content: ''; position: absolute; left: 10px; right: 10px; height: 2px; border-radius: 1px; background: var(--sc); }
+  /* drop bars run as long as a divider line: 4px in from the card edges */
+  .ncard.drop-before::before, .ncard.drop-after::after { content: ''; position: absolute; left: 3px; right: 3px; height: 2px; border-radius: 1px; background: var(--sc); }
   .ncard.drop-before::before { top: -5px; }
+  /* drop zone: fills the space under the cards */
+  .nend { position: relative; flex: 1 0 64px; }
+  .nend.drop-on::before { content: ''; position: absolute; left: 4px; right: 4px; top: 0; height: 2px; border-radius: 1px; background: var(--sc); }
   .ncard.drop-after::after { bottom: -5px; }
   .nhead { display: flex; align-items: center; gap: 10px; }
   .prev { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -347,6 +351,27 @@
   #notes header .icon-btn { margin-right: 4px; }
   .ncard:not(.open) { padding: 4px 3px 4px 12px; }
   .nhead { margin-right: -9px; }
+
+  /* a divider line between cards ("---" in the add box); its label sits in the middle and stays invisible until written or focused */
+  .ncard.nline { gap: 0; padding-left: 3px; padding-right: 3px; background: none; border-color: transparent; cursor: default; }
+  .ncard.nline:hover { border-color: transparent; }
+  .lbar { flex: 1; height: 1px; background: var(--faint); }
+  .lwrap { position: relative; flex: none; max-width: 70%; }
+  .lsize { display: block; height: 20px; padding: 0 10px; font-size: 12px; white-space: pre; overflow: hidden; visibility: hidden; }
+  .lsize:empty { padding: 0; }
+  .lwrap:focus-within .lsize { min-width: 90px; }
+  /* no label: the middle 90px is still clickable, with the line drawn through it so it looks unbroken */
+  .lwrap:has(.lsize:empty) { min-width: 90px; }
+  .lwrap:has(.lsize:empty):not(:focus-within) { background: linear-gradient(var(--faint), var(--faint)) center / 100% 1px no-repeat; }
+  .nlabel {
+    position: absolute; inset: 0; width: 100%; padding: 0 10px; border: 0; outline: 0; background: none;
+    font: inherit; font-size: 12px; line-height: 20px; color: var(--muted); text-align: center; cursor: text;
+  }
+  /* the tail: sits over the last 32px of the line, in the same slot as the other right-hand buttons; hidden until hovered,
+     then shown in the square's colour; drag it to move the line, click it twice to remove the line */
+  .ltail { position: absolute; right: 3px; top: 50%; width: 32px; height: 32px; transform: translateY(-50%); cursor: grab; }
+  .ltail::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: transparent; transition: background .15s, height .15s; }
+  .ltail:hover::before, .ltail.armed::before { background: var(--sc); }
   .nsec { margin: 10px 4px 2px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
   .nsec:first-child { margin-top: 0; }
   .nsec span { margin-left: 6px; font-weight: 400; opacity: .7; }
@@ -1177,6 +1202,11 @@
   function cardHtml(c) {
     const q = sqOf(c.sq);
     const grip = nv.q || c.tab === 'archive' ? '' : `<span class="grip" draggable="true" title="Drag to reorder">${GRIP}</span>`;
+    if (c.line) {
+      return `<div class="ncard nline" data-id="${c.id}"><span class="lbar"></span>`
+        + `<span class="lwrap"><span class="lsize">${esc(c.title)}</span><input class="nlabel" maxlength="60" value="${esc(c.title)}"></span>`
+        + '<span class="lbar"></span><span class="ltail" draggable="true"></span></div>';
+    }
     const mini = !(nv.sq === 'all' || nv.q) ? ''
       : q ? `<i class="mini" style="--c:${q.color}">${esc(q.code)}</i>` : '<i class="mini any">ANY</i>';
     const when = c.tab === 'archive' ? `${c.done ? 'Done' : 'Archived'} · ${day(c.at)}` : '';
@@ -1206,7 +1236,7 @@
   function renderNotes() {
     const cur = nv.sq === 'all' ? null : sqOf(nv.sq);
     notesEl.style.setProperty('--sc', cur ? cur.color : 'var(--accent)');
-    const count = (tab, sq) => N.cards.filter((c) => c.tab === tab && (sq === 'all' || c.sq === sq)).length;
+    const count = (tab, sq) => N.cards.filter((c) => !c.line && c.tab === tab && (sq === 'all' || c.sq === sq)).length;
     const tip = { all: 'All squares' };
     nSquares.innerHTML = [{ id: 'all', code: 'ANY', color: 'var(--accent)' }, ...squares()].map((q) => {
       const n = count(nv.tab, q.id);
@@ -1228,15 +1258,18 @@
     if (nv.q) {
       const q = nv.q.toLowerCase(), has = (t) => (t || '').toLowerCase().includes(q);
       const part = (name, list) => list.length ? `<h4 class="nsec">${name}<span>${list.length}</span></h4>` + list.map(cardHtml).join('') : '';
-      nList.innerHTML = part('Title', N.cards.filter((c) => has(c.title)))
-        + part('Body', N.cards.filter((c) => !has(c.title) && has(c.body)))
+      nList.innerHTML = part('Title', N.cards.filter((c) => !c.line && has(c.title)))
+        + part('Body', N.cards.filter((c) => !c.line && !has(c.title) && has(c.body)))
         || '<p class="nempty">Nothing matches</p>';
       return;
     }
     const list = visible(), shown = nv.more ? list : list.slice(0, LIMIT);
+    // a drop zone below the cards, to throw a dragged card or line to the bottom
+    const zones = nv.tab !== 'archive' && list.length;
     nList.innerHTML = shown.map(cardHtml).join('')
       + (list.length > shown.length ? `<button type="button" class="text-btn nmore" data-n="more">Show ${list.length - shown.length} more</button>` : '')
-      + (list.length ? '' : `<p class="nempty">${EMPTY[nv.tab]}</p>`);
+      + (list.length ? '' : `<p class="nempty">${EMPTY[nv.tab]}</p>`)
+      + (zones ? '<div class="nend" data-end="bottom"></div>' : '');
     const ta = nList.querySelector('.ntext');
     if (ta) fit(ta);
   }
@@ -1325,6 +1358,7 @@
     const text = nAdd.value.trim();
     if (!text) return;
     const c = { id: uid(), sq: nv.sq === 'all' ? '' : nv.sq, tab: nv.tab, title: '', body: text };
+    if (text === '---') Object.assign(c, { line: true, body: '' });
     if (tail) N.cards.push(c); else N.cards.unshift(c);
     nAdd.value = '';
     nAdd.style.height = '';
@@ -1356,6 +1390,13 @@
 
   const NACT = {
     tail() { addCard(true); },
+    // a divider line: first click on its tail arms it, the second removes it
+    lineDel(c, b) {
+      if (!b.classList.contains('armed')) return b.classList.add('armed');
+      N.cards.splice(N.cards.indexOf(c), 1);
+      nsave();
+      renderList();
+    },
     newSq() { Object.assign(nv, { edit: 'new', color: COLORS[N.squares.length % COLORS.length] }); renderEdit(); },
     sqSave,
     sqCancel() { nv.edit = ''; renderEdit(); },
@@ -1395,6 +1436,7 @@
     downInOpen = !!e.target.closest('.ncard.open');
     downInNotes = !!e.target.closest('#notes');
     unsure(e.target.closest('.sure'));
+    nList.querySelectorAll('.ltail.armed').forEach((b) => { if (b !== e.target.closest('.ltail')) b.classList.remove('armed'); });
     if (!e.target.closest('#radial')) closeRadial();
     // a left click on the clock itself closes Settings / Notes; with a card open, the first click only folds the card
     if (e.button === 0 && !e.target.closest('#notes, #panel, #controls, #pin, #radial, #capture')) {
@@ -1418,6 +1460,8 @@
   notesEl.addEventListener('click', (e) => {
     const b = e.target.closest('button'), el = e.target.closest('.ncard'), c = el && cardOf(el.dataset.id);
     if (nv.open && !downInOpen && !c) { nv.open = ''; renderList(); }
+    const tl = e.target.closest('.ltail');
+    if (tl) return NACT.lineDel(c, tl);
     if (b) {
       if (b.dataset.act) return;  // close button, handled with the other actions
       b.blur();
@@ -1425,6 +1469,13 @@
       if (b.dataset.tab) { Object.assign(nv, { tab: b.dataset.tab, open: '', more: false }); return viewChanged(); }
       if (b.dataset.color) return pickColor(b.dataset.color);
       if (b.dataset.n) return NACT[b.dataset.n](c, b);
+    }
+    // a divider line never opens; only a click on its label (or the middle, when it has none) edits the label
+    if (c && c.line) {
+      const lab = e.target.closest('.nlabel');
+      if (nv.open) { nv.open = ''; renderList(); }
+      const i = lab && nList.querySelector(`.ncard[data-id="${c.id}"] .nlabel`);
+      return i && i.focus();
     }
     if (c && !el.classList.contains('open')) openCard(c);
   });
@@ -1440,6 +1491,7 @@
     const el = t.closest('.ncard'), c = el && cardOf(el.dataset.id);
     if (!c) return;
     if (t.classList.contains('ntitle')) c.title = t.value;
+    else if (t.classList.contains('nlabel')) { c.title = t.value; t.previousElementSibling.textContent = t.value; }
     else if (t.classList.contains('ntext')) { c.body = t.value; fit(t); }
     // swap Archive / Delete as the note turns empty or not while typing
     const p = el.querySelector('.nacts .push');
@@ -1471,6 +1523,7 @@
       return;
     }
     if (t.classList.contains('sqcode')) return sqSave();
+    if (t.classList.contains('nlabel')) { e.preventDefault(); return t.blur(); }
     if (!t.matches('.ntitle, .ntext')) return;
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
@@ -1483,7 +1536,7 @@
     if (t.classList.contains('ntitle')) { e.preventDefault(); t.closest('.ncard').querySelector('.ntext').focus(); }
   });
 
-  // drag a card by its grip: onto another card to reorder, onto a tab or a square to move it there
+  // drag a card by its grip (a divider line by its tail): onto another card to reorder, onto a tab or a square to move it there
   // drag a square (not ANY) onto another square to reorder the squares
   let dragId = '', dragSq = '';
   const below = (el, e) => { const r = el.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
@@ -1495,8 +1548,18 @@
     return t && t.dataset.sq !== dragSq ? t : null;
   }
   function dropTarget(e) {
-    const t = e.target.closest('.ncard, [data-tab], [data-sq]'), c = cardOf(dragId);
-    if (!t || !c || t.dataset.id === c.id || t.dataset.sq === 'all' || t.dataset.tab === c.tab || t.dataset.sq === c.sq) return null;
+    const c = cardOf(dragId);
+    if (!c) return null;
+    let t = e.target.closest('.ncard, .nend, [data-tab], [data-sq]');
+    // divider lines only reorder within the list
+    if (t && c.line && !t.dataset.id && !t.dataset.end) t = null;
+    // no aiming needed: anywhere above the first card throws to the top, anywhere below the last card to the bottom
+    if (!t) {
+      const cards = nList.querySelectorAll('.ncard');
+      if (cards.length && e.clientY < cards[0].getBoundingClientRect().top) t = cards[0];
+      else if (cards.length && e.clientY > cards[cards.length - 1].getBoundingClientRect().bottom) t = nList.querySelector('.nend');
+    }
+    if (!t || t.dataset.id === c.id || t.dataset.sq === 'all' || t.dataset.tab === c.tab || t.dataset.sq === c.sq) return null;
     return t;
   }
   notesEl.addEventListener('dragstart', (e) => {
@@ -1507,15 +1570,14 @@
       e.dataTransfer.setData('text/plain', '');
       return;
     }
-    const g = e.target.closest && e.target.closest('.grip');
+    const g = e.target.closest && e.target.closest('.grip, .ltail');
     if (!g) return;
     const el = g.closest('.ncard');
     dragId = el.dataset.id;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', '');
     e.dataTransfer.setDragImage(el, 16, 16);
-    el.classList.add('dragging');
-  });
+    el.classList.add('dragging');  });
   notesEl.addEventListener('dragover', (e) => {
     if (dragSq) {
       clearDrop();
@@ -1549,6 +1611,14 @@
       N.cards.splice(N.cards.indexOf(cardOf(t.dataset.id)) + (below(t, e) ? 1 : 0), 0, c);
       nsave();
       renderList();
+    } else if (t.dataset.end) {
+      // thrown to the bottom: after the last card of this view
+      const list = visible().filter((x) => x !== c), last = list[list.length - 1];
+      N.cards.splice(N.cards.indexOf(c), 1);
+      N.cards.splice(last ? N.cards.indexOf(last) + 1 : N.cards.length, 0, c);
+      if (list.length >= LIMIT) nv.more = true;
+      nsave();
+      renderList();
     } else if (t.dataset.tab) moveCard(c, t.dataset.tab);
     else {
       c.sq = t.dataset.sq;
@@ -1559,8 +1629,7 @@
   });
   notesEl.addEventListener('dragend', () => {
     dragId = dragSq = '';
-    clearDrop();
-    const el = nList.querySelector('.dragging');
+    clearDrop();    const el = nList.querySelector('.dragging');
     if (el) el.classList.remove('dragging');
   });
 
