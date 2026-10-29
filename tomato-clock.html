@@ -355,14 +355,15 @@
   /* a divider line between cards ("---" in the add box); its label sits in the middle and stays invisible until written or focused */
   .ncard.nline { gap: 0; padding-left: 3px; padding-right: 3px; background: none; border-color: transparent; cursor: default; }
   .ncard.nline:hover { border-color: transparent; }
-  .lbar { flex: 1; height: 1px; background: var(--faint); }
-  .lwrap { position: relative; flex: none; max-width: 70%; }
+  /* one unbroken line across the card; the label sits on top and covers it only when it has text or is focused */
+  .lbar { position: absolute; left: 3px; right: 3px; top: 50%; height: 1px; background: var(--faint); }
+  .lwrap { position: relative; flex: none; max-width: 70%; margin: 0 auto; background: var(--panel); }
   .lsize { display: block; height: 20px; padding: 0 10px; font-size: 12px; white-space: pre; overflow: hidden; visibility: hidden; }
   .lsize:empty { padding: 0; }
   .lwrap:focus-within .lsize { min-width: 90px; }
-  /* no label: the middle 90px is still clickable, with the line drawn through it so it looks unbroken */
+  /* no label: the middle 90px is still clickable but see-through, so the line shows through it untouched */
   .lwrap:has(.lsize:empty) { min-width: 90px; }
-  .lwrap:has(.lsize:empty):not(:focus-within) { background: linear-gradient(var(--faint), var(--faint)) center / 100% 1px no-repeat; }
+  .lwrap:has(.lsize:empty):not(:focus-within) { background: none; }
   .nlabel {
     position: absolute; inset: 0; width: 100%; padding: 0 10px; border: 0; outline: 0; background: none;
     font: inherit; font-size: 12px; line-height: 20px; color: var(--muted); text-align: center; cursor: text;
@@ -370,7 +371,7 @@
   /* the tail: sits over the last 32px of the line, in the same slot as the other right-hand buttons; hidden until hovered,
      then shown in the square's colour; drag it to move the line, click it twice to remove the line */
   .ltail { position: absolute; right: 3px; top: 50%; width: 32px; height: 32px; transform: translateY(-50%); cursor: grab; }
-  .ltail::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; transform: translateY(-50%); background: transparent; transition: background .15s, height .15s; }
+  .ltail::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: transparent; transition: background .15s, height .15s; }
   .ltail:hover::before, .ltail.armed::before { background: var(--sc); }
   .nsec { margin: 10px 4px 2px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
   .nsec:first-child { margin-top: 0; }
@@ -1205,7 +1206,7 @@
     if (c.line) {
       return `<div class="ncard nline" data-id="${c.id}"><span class="lbar"></span>`
         + `<span class="lwrap"><span class="lsize">${esc(c.title)}</span><input class="nlabel" maxlength="60" value="${esc(c.title)}"></span>`
-        + '<span class="lbar"></span><span class="ltail" draggable="true"></span></div>';
+        + '<span class="ltail" draggable="true"></span></div>';
     }
     const mini = !(nv.sq === 'all' || nv.q) ? ''
       : q ? `<i class="mini" style="--c:${q.color}">${esc(q.code)}</i>` : '<i class="mini any">ANY</i>';
