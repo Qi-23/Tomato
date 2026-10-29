@@ -1,0 +1,1635 @@
+<!doctype html>
+<html lang="en" data-theme="auto" data-phase="idle">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tomato</title>
+<link rel="icon" id="favicon" href="data:,">
+<style>
+  @property --accent { syntax: '<color>'; inherits: true; initial-value: #a5aaaf; }
+
+  :root {
+    color-scheme: light;
+    --bg: #f3f1ed; --fg: #33383d; --muted: #8e9399; --faint: rgba(0,0,0,.14);
+    --track: rgba(0,0,0,.06); --panel: #f6f5f2; --card: #ffffff; --line: rgba(0,0,0,.08);
+    --idle: #a5aaaf; --focus: #6d8db0; --short: #5e9ed8; --long: #5f9e9a; --lunch: #c3976a;
+    --accent: var(--idle);
+    transition: --accent 4s ease;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #1a1c1f; --fg: #d0d3d7; --muted: #737981; --faint: rgba(255,255,255,.16);
+      --track: rgba(255,255,255,.06); --panel: #1f2124; --card: #282b2f; --line: rgba(255,255,255,.07);
+      --idle: #5e646b; --focus: #7f9dbd; --short: #7fb4e6; --long: #73ada8; --lunch: #c9a47d;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1a1c1f; --fg: #d0d3d7; --muted: #737981; --faint: rgba(255,255,255,.16);
+    --track: rgba(255,255,255,.06); --panel: #1f2124; --card: #282b2f; --line: rgba(255,255,255,.07);
+    --idle: #5e646b; --focus: #7f9dbd; --short: #7fb4e6; --long: #73ada8; --lunch: #c9a47d;
+  }
+  :root[data-phase="focus"] { --accent: var(--focus); }
+  :root[data-phase="short"] { --accent: var(--short); }
+  :root[data-phase="long"]  { --accent: var(--long); }
+  :root[data-phase="lunch"] { --accent: var(--lunch); }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    user-select: none; transition: background-color .6s;
+  }
+  body:not(.awake) { cursor: none; }
+
+  /* stage: time + progress design are laid out as one group, and the group is centered */
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; transition: right .45s ease, bottom .45s ease; }
+  #group { position: relative; display: flex; flex-direction: column; align-items: center; gap: 28px; transition: transform .45s ease; }
+  #dial { position: relative; display: grid; place-items: center; }
+  body[data-visual="ring"] #dial { width: 280px; height: 280px; }
+
+  /* progress visuals */
+  #ring, #horizon, #edge, #wash { display: none; }
+  body[data-visual="ring"] #ring, body[data-visual="horizon"] #horizon,
+  body[data-visual="edge"] #edge, body[data-visual="wash"] #wash { display: block; }
+
+  /* tint: faint phase color over the page, plus a soft fill rising from the bottom as the phase goes on */
+  #wash { position: fixed; inset: 0; pointer-events: none; background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  #wash i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--accent); opacity: .1; transition: height 1s linear; }
+  #ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+  #ring circle { fill: none; stroke-width: 2; }
+  #ring .track { stroke: var(--track); }
+  #arc { stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+  #horizon { width: 76vw; height: 1px; background: var(--track); }
+  #edge { position: fixed; left: 0; right: 0; bottom: 0; height: 4px; background: var(--track); }
+  #horizon i, #edge i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 1s linear; }
+
+  #breath {
+    position: fixed; top: 50%; left: 50%; width: 140px; height: 140px; margin: -70px 0 0 -70px;
+    border-radius: 50%; background: var(--accent); opacity: 0; transform: scale(.55);
+    pointer-events: none; transition: opacity 2s, left .45s ease;
+  }
+  body.breathing #breath { opacity: .14; animation: breathe 10s ease-in-out infinite; }
+  @keyframes breathe { 0% { transform: scale(.55); } 40% { transform: scale(1); } 100% { transform: scale(.55); } }
+
+  /* current time */
+  #clock {
+    display: flex; flex-direction: column; align-items: center;
+    font-family: "Segoe UI Variable Display", "SF Pro Display", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    color: var(--fg); white-space: nowrap;
+  }
+  #big {
+    display: flex; align-items: baseline; gap: .12em;
+    font-weight: 200; font-size: clamp(72px, 15vw, 168px); line-height: 1;
+    letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+  }
+  body[data-visual="ring"] #big { font-size: 68px; }
+  /* trim the line box to the digits (cap height → baseline) so they sit at the true center */
+  #hm { text-box: trim-both cap alphabetic; }
+  #ampm { font-size: .22em; font-weight: 400; letter-spacing: .06em; color: var(--muted); }
+  #ampm:empty { display: none; }
+  #sub {
+    display: none; margin-top: 12px;
+    font-size: 16px; font-weight: 400; line-height: 1; letter-spacing: .04em; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  body.sub-on #sub { display: block; }
+  /* optical center inside the ring: the big number carries most of the weight */
+  body.sub-on[data-visual="ring"] #clock { transform: translateY(8px); }
+
+  /* hangs below the group so it never shifts the centered group */
+  #prompt {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    width: min(90vw, 420px); margin: 28px 0 0; text-align: center;
+    font-size: 15px; line-height: 1.5; color: var(--muted);
+    opacity: 0; transition: opacity 1.5s;
+  }
+  #prompt.show { opacity: 1; }
+
+  /* phase label */
+  #label {
+    position: fixed; bottom: 14px; display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; font-size: 12px; letter-spacing: .02em; color: var(--muted);
+    opacity: .8; transition: opacity 1.5s; cursor: default;
+  }
+  body[data-label-pos="right"] #label { right: 14px; }
+  body[data-label-pos="left"] #label { left: 14px; }
+  #label .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  #label .time { display: none; font-variant-numeric: tabular-nums; }
+  #label:hover .time, body[data-label-mode="full"] #label .time { display: inline; }
+  body[data-label-mode="auto"] #label { opacity: 0; }
+  body[data-label-mode="auto"] #label.reveal, body #label:hover { opacity: .8; }
+
+  /* controls */
+  #controls {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 4px;
+    opacity: 0; pointer-events: none; transition: opacity .6s, left .45s ease;
+  }
+  body.awake #controls { opacity: 1; pointer-events: auto; }
+  .icon-btn {
+    width: 34px; height: 34px; display: grid; place-items: center; padding: 0;
+    background: none; border: 0; border-radius: 8px; color: var(--muted); cursor: pointer;
+  }
+  .icon-btn:hover { color: var(--fg); background: var(--track); }
+  .icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .ic-pause, body.running .ic-play { display: none; }
+  body.running .ic-pause { display: block; }
+  #dots { display: flex; gap: 5px; margin: 0 10px; }
+  #dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--faint); transition: background-color 1s; }
+  #dots i.on { background: var(--accent); }
+  #dots i.cur { background: var(--accent); opacity: .45; }
+
+  /* settings panel */
+  #panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 340px; max-width: 100vw;
+    padding: 0 18px 32px; overflow-y: auto; font-size: 13px;
+    background: var(--panel); border-left: 1px solid var(--line);
+    box-shadow: -16px 0 48px rgba(0,0,0,.06);
+    transform: translateX(105%); transition: transform .35s ease; user-select: auto;
+  }
+  body.panel-open #panel { transform: none; }
+  /* title + close stay on top while the panel scrolls */
+  #panel header {
+    position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center;
+    margin: 0 -18px; padding: 18px 20px 6px 22px; background: var(--panel);
+  }
+  #panel h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  #panel h3 { margin: 22px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; padding: 8px 14px; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row.stack { flex-direction: column; align-items: stretch; gap: 8px; padding: 12px 14px; }
+  .hint { margin: 0; font-size: 12px; color: var(--muted); }
+  .note { margin: 8px 4px 0; font-size: 12px; color: var(--muted); }
+  .note:empty { display: none; }
+
+  .seg { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--track); }
+  .seg label { flex: 1; position: relative; }
+  .seg input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+  .seg span {
+    display: block; padding: 5px 8px; border-radius: 6px; text-align: center; white-space: nowrap;
+    font-size: 12px; color: var(--muted); transition: background-color .2s, color .2s;
+  }
+  .seg input:hover + span { color: var(--fg); }
+  .seg input:checked + span { background: var(--card); color: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .seg input:focus-visible + span { outline: 2px solid var(--accent); }
+
+  .switch {
+    appearance: none; flex: none; position: relative; width: 34px; height: 20px; margin: 0;
+    border-radius: 10px; background: var(--faint); cursor: pointer; transition: background-color .2s;
+  }
+  .switch::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .2s;
+  }
+  .switch:checked { background: var(--accent); }
+  .switch:checked::after { transform: translateX(14px); }
+
+  .num { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .num input, .row input[type="time"] {
+    font: inherit; font-size: 13px; color: var(--fg); background: transparent;
+    border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .num input { width: 54px; text-align: right; }
+  .num input:focus, .row input[type="time"]:focus { outline: none; border-color: var(--accent); }
+  .range { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .row-end { display: flex; align-items: center; gap: 10px; }
+  .row input[type="range"] { width: 130px; margin: 0; accent-color: var(--accent); }
+  .text-btn {
+    font: inherit; font-size: 12px; color: var(--muted); background: none; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px;
+  }
+  .text-btn:hover { color: var(--fg); border-color: var(--faint); }
+
+  #autoCard { transition: border-color .4s; }
+  #autoCard.on { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  #autoCard.on #autoText { color: var(--fg); }
+  #autoText { color: var(--muted); }
+
+  /* short message that fades in at the top, then away */
+  #toast {
+    position: fixed; top: 22px; left: 50%; transform: translate(-50%, -6px);
+    padding: 8px 14px; border-radius: 10px; white-space: nowrap;
+    font-size: 13px; color: var(--muted); background: var(--card);
+    border: 1px solid var(--line); box-shadow: 0 4px 18px rgba(0,0,0,.06);
+    opacity: 0; pointer-events: none; transition: opacity .8s, transform .8s;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- notes: the clock steps aside to the left, notes take the right ---------- */
+  :root { --nw: min(64vw, 920px); }
+  body.notes-open #stage { right: var(--nw); }
+  body.notes-open #group { transform: scale(.62); }
+  body.notes-open #horizon { width: 46vw; }
+  body.notes-open #controls, body.notes-open #breath, body.notes-open #toast { left: calc((100vw - var(--nw)) / 2); }
+  body.notes-open #edge { right: var(--nw); }
+  body.notes-open[data-label-pos="right"] #label { right: calc(var(--nw) + 14px); }
+  body.notes-open #toast { max-width: calc(100vw - var(--nw) - 24px); white-space: normal; text-align: center; }
+
+  #notes {
+    --sc: var(--accent);
+    position: fixed; top: 0; right: 0; bottom: 0; width: var(--nw);
+    display: flex; flex-direction: column; gap: 14px; padding: 22px 28px 24px;
+    background: var(--panel); border-left: 1px solid var(--line); box-shadow: -16px 0 48px rgba(0,0,0,.05);
+    transform: translateX(105%); transition: transform .45s ease; user-select: auto;
+  }
+  body.notes-open #notes { transform: none; }
+  #notes [hidden], #nEdit:empty { display: none; }
+  #notes header { display: flex; align-items: center; gap: 12px; }
+  #notes header .icon-btn { margin-left: auto; }
+  .nsearch {
+    flex: 1; max-width: 380px; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--muted);
+  }
+  .nsearch:focus-within { border-color: color-mix(in srgb, var(--sc) 50%, var(--line)); }
+  .nsearch svg { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  .nsearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; color: var(--fg); }
+
+  /* squares: 1–3 characters on a colour, ANY is outlined, + adds one */
+  .sqs { display: flex; flex-wrap: wrap; gap: 12px; padding: 6px 6px 0 0; }
+  .sq {
+    position: relative; width: 40px; height: 40px; padding: 0; border-radius: 10px;
+    border: 1.5px solid transparent; background: var(--c); color: #fff; cursor: pointer;
+    font: 600 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .04em;
+    transition: transform .15s, box-shadow .2s;
+  }
+  .sq:hover, .sq.drop-on { transform: translateY(-1px); }
+  .sq.drop-on { transform: scale(1.12); }
+  /* where a dragged square will land: a thin line just left / right of the square under it */
+  .sqs .sq.sq-before { box-shadow: -7px 0 0 -5px var(--muted); }
+  .sqs .sq.sq-after { box-shadow: 7px 0 0 -5px var(--muted); }
+  .sq.sel { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--c); }
+  .sq.all { background: transparent; border-color: var(--c); color: var(--c); }
+  .sq.add { background: transparent; border: 1.5px dashed var(--faint); color: var(--muted); font-size: 18px; font-weight: 300; }
+  .sq[data-count]::after {
+    content: attr(data-count); position: absolute; top: -7px; right: -7px;
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: var(--card); border: 1px solid var(--line); color: var(--muted);
+    font-size: 10px; font-weight: 500; line-height: 14px; letter-spacing: 0;
+  }
+  .sqedit {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 12px 14px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  }
+  .sqcode {
+    width: 48px; height: 48px; border: 0; border-radius: 12px; outline: none;
+    background: var(--c); color: #fff; text-align: center; text-transform: uppercase;
+    font: 600 13px system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .04em;
+  }
+  .sqcode::placeholder { color: rgba(255,255,255,.6); }
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sw { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 6px; background: var(--c); cursor: pointer; }
+  .sw.sel { box-shadow: 0 0 0 2px var(--card), 0 0 0 3.5px var(--c); }
+  .sqedit .row-end { margin-left: auto; gap: 6px; }
+
+  .ntabs { display: flex; gap: 22px; border-bottom: 1px solid var(--line); }
+  .ntab { position: relative; padding: 6px 0 10px; border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .ntab span { margin-left: 6px; font-size: 11px; opacity: .7; }
+  .ntab:hover, .ntab.sel { color: var(--fg); }
+  .ntab.sel::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 1px; background: var(--sc); }
+  .ntab.drop-on { color: var(--sc); }
+
+  .nadd {
+    display: block; width: 100%; padding: 10px 14px; border: 1px dashed var(--line); border-radius: 10px;
+    background: transparent; font: inherit; line-height: 1.4; color: var(--fg); outline: none; resize: none; overflow: hidden;
+  }
+  .nadd::placeholder { color: var(--muted); }
+  .nadd:focus { border-style: solid; border-color: color-mix(in srgb, var(--sc) 50%, var(--line)); background: var(--card); }
+
+  .nlist { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 0 -6px; padding: 4px 6px 12px; }
+  .ncard {
+    position: relative; flex: none; display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 8px 12px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; transition: border-color .2s;
+  }
+  .ncard:hover { border-color: var(--faint); }
+  .ncard.open { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px 12px; cursor: default; border-color: color-mix(in srgb, var(--sc) 40%, var(--line)); }
+  .ncard.dragging { opacity: .4; }
+  .ncard.drop-before::before, .ncard.drop-after::after { content: ''; position: absolute; left: 10px; right: 10px; height: 2px; border-radius: 1px; background: var(--sc); }
+  .ncard.drop-before::before { top: -5px; }
+  .ncard.drop-after::after { bottom: -5px; }
+  .nhead { display: flex; align-items: center; gap: 10px; }
+  .prev { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .where { flex: none; font-size: 11px; color: var(--muted); }
+  .grip { flex: none; display: grid; place-items: center; width: 14px; height: 24px; margin-left: -4px; color: var(--faint); cursor: grab; }
+  .ncard:hover .grip { color: var(--muted); }
+  .grip svg { width: 8px; height: 14px; fill: currentColor; }
+  .mini {
+    flex: none; display: grid; place-items: center; min-width: 26px; height: 18px; padding: 0 4px; border-radius: 5px;
+    background: var(--c); color: #fff; font: normal 600 9px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .04em;
+  }
+  /* cards in no square carry an outlined ANY badge, like the ANY square */
+  .mini.any { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+  .ntitle { flex: 1; min-width: 0; padding: 2px 0; border: 0; outline: 0; background: none; font: inherit; font-size: 15px; font-weight: 600; color: var(--fg); }
+  .ntitle::placeholder, .ntext::placeholder { color: var(--faint); }
+  .ntext { min-height: 44px; padding: 0; border: 0; outline: 0; resize: none; background: none; font: inherit; line-height: 1.55; color: var(--fg); }
+  .nacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .nacts .push { margin-left: auto; }
+  .nacts select { font: inherit; font-size: 12px; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
+  .icon-btn.fold { flex: none; width: 28px; height: 28px; }
+  .text-btn.sure { color: #c47b6b; border-color: currentColor; }
+  .nacts .where { margin-right: auto; }
+  .ibtn { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+  .ibtn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .nsec { margin: 10px 4px 2px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .nsec:first-child { margin-top: 0; }
+  .nsec span { margin-left: 6px; font-weight: 400; opacity: .7; }
+  .nmore { align-self: center; margin-top: 4px; }
+  .nempty { margin: 28px 0; text-align: center; font-size: 13px; color: var(--muted); }
+
+  /* quick capture: a small box at the top, Enter keeps the idea in ANY · Ideas */
+  #capture {
+    position: fixed; top: 64px; left: 50%; width: min(90vw, 440px);
+    transform: translate(-50%, -8px); opacity: 0; visibility: hidden;
+    transition: opacity .3s, transform .3s, visibility 0s .3s;
+  }
+  #capture.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition-delay: 0s; }
+  #capture input {
+    width: 100%; padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; outline: none;
+    background: var(--card); color: var(--fg); font: inherit; box-shadow: 0 8px 28px rgba(0,0,0,.08);
+  }
+
+  /* pick-up pin: a small note for after the break, in a corner chosen in Settings */
+  #pin { position: fixed; display: flex; flex-direction: column; gap: 8px; pointer-events: none; transition: right .45s ease; }
+  #pin > * { pointer-events: auto; }
+  body[data-pin-corner="tl"] #pin { top: 16px; left: 16px; align-items: flex-start; }
+  body[data-pin-corner="tr"] #pin { top: 16px; right: 16px; align-items: flex-end; }
+  body[data-pin-corner="bl"] #pin { bottom: 52px; left: 16px; align-items: flex-start; flex-direction: column-reverse; }
+  body[data-pin-corner="br"] #pin { bottom: 52px; right: 16px; align-items: flex-end; flex-direction: column-reverse; }
+  body.notes-open[data-pin-corner="tr"] #pin, body.notes-open[data-pin-corner="br"] #pin { right: calc(var(--nw) + 16px); }
+  /* the icon only appears near / during a break, and only while the mouse moves */
+  #pinIcon { opacity: 0; pointer-events: none; transition: opacity .6s, color .2s, background-color .2s; }
+  body:not(.pin-avail) #pinIcon { display: none; }
+  body.awake.pin-avail #pinIcon { opacity: 1; pointer-events: auto; }
+  #pinBox, #pinNote {
+    display: none; flex-direction: column; gap: 8px; width: 260px; padding: 12px 14px; user-select: auto;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.08);
+  }
+  #pinNote { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+  #pin.editing #pinBox, #pin.shown #pinNote { display: flex; }
+  #pinIn { display: block; width: 100%; min-height: 64px; padding: 0; border: 0; outline: 0; resize: none; background: none; font: inherit; line-height: 1.5; color: var(--fg); }
+  #pinIn::placeholder { color: var(--muted); }
+  /* buttons sit on the edge facing the screen centre: Pin / Close on the centre side, Cancel / label on the corner side */
+  .pin-acts { display: flex; justify-content: space-between; align-items: center; }
+  body[data-pin-corner="bl"] #pinBox, body[data-pin-corner="bl"] #pinNote,
+  body[data-pin-corner="br"] #pinBox, body[data-pin-corner="br"] #pinNote { flex-direction: column-reverse; }
+  body[data-pin-corner="tr"] .pin-acts, body[data-pin-corner="br"] .pin-acts { flex-direction: row-reverse; }
+  .pin-label { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  #pinText { margin: 0; white-space: pre-wrap; line-height: 1.5; color: var(--fg); }
+  #pin .icon-btn.small { width: 26px; height: 26px; }
+  #pin .icon-btn.small svg { width: 15px; height: 15px; }
+
+  /* right-click menu on the clock: a round pie; left half = start/pause, pin, settings; right half = notes */
+  #radial {
+    position: fixed; width: 210px; height: 210px; margin: -105px 0 0 -105px;
+    display: grid; grid-template: 1fr 1fr 1fr / 1fr 1fr; gap: 3px; border-radius: 50%; overflow: hidden;
+    box-shadow: 0 10px 36px rgba(0,0,0,.12);
+    opacity: 0; visibility: hidden; transform: scale(.92);
+    transition: opacity .18s, transform .18s, visibility 0s .18s;
+  }
+  #radial.show { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
+  #radial button {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    border: 0; background: var(--card); color: var(--muted); cursor: pointer;
+    font: inherit; font-size: 11px; letter-spacing: .02em; transition: background-color .15s, color .15s;
+  }
+  #radial button:hover { background: color-mix(in srgb, var(--accent) 12%, var(--card)); color: var(--fg); }
+  #radial svg { flex: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  /* padding nudges each icon + word toward the middle of its slice */
+  .r-tl { padding: 20px 0 0 22px; }
+  .r-ml { padding-left: 8px; }
+  .r-bl { padding: 0 0 20px 22px; }
+  .r-r { grid-row: 1 / -1; grid-column: 2; padding-right: 14px; }
+  /* outside pin time the Pin slice is left out and the left half is two quarters */
+  #radial:not(.with-pin) { grid-template-rows: 1fr 1fr; }
+  #radial:not(.with-pin) .r-ml { display: none; }
+  #radial:not(.with-pin) .r-tl { padding: 30px 0 0 20px; }
+  #radial:not(.with-pin) .r-bl { padding: 0 0 30px 20px; }
+
+  /* narrow screens: the clock becomes a band along the top */
+  @media (max-width: 760px) {
+    :root { --nw: 100vw; }
+    #notes { top: 32vh; border-left: 0; border-top: 1px solid var(--line); padding: 16px 16px 20px; transform: translateY(105%); }
+    body.notes-open #stage { right: 0; bottom: 68vh; }
+    body.notes-open #group { transform: scale(.42); }
+    body.notes-open #controls, body.notes-open #breath, body.notes-open #toast { left: 50%; }
+    body.notes-open #controls { bottom: calc(68vh + 2px); }
+    body.notes-open #breath { top: 16vh; }
+    body.notes-open #label, body.notes-open #prompt { display: none; }
+    body.notes-open #toast { max-width: calc(100vw - 32px); }
+  }
+
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin: 0; padding: 12px 14px; color: var(--muted); }
+  .keys dt { justify-self: start; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; color: var(--fg); }
+  .keys dd { margin: 0; }
+</style>
+</head>
+<body data-visual="ring" data-label-pos="right" data-label-mode="word">
+  <div id="wash"><i id="wfill"></i></div>
+  <div id="edge"><i id="efill"></i></div>
+  <div id="breath"></div>
+  <main id="stage">
+    <div id="group">
+      <div id="dial">
+        <svg id="ring" viewBox="0 0 280 280" aria-hidden="true">
+          <circle class="track" cx="140" cy="140" r="134"/>
+          <circle id="arc" cx="140" cy="140" r="134"/>
+        </svg>
+        <div id="clock">
+          <div id="big"><span id="hm"></span><span id="ampm"></span></div>
+          <div id="sub"></div>
+        </div>
+      </div>
+      <div id="horizon"><i id="hfill"></i></div>
+      <p id="prompt"></p>
+    </div>
+  </main>
+
+  <div id="label"><span class="dot"></span><span id="word">Ready</span><span class="time" id="time"></span></div>
+
+  <nav id="controls">
+    <span id="dots"></span>
+    <button class="icon-btn" data-act="reset" title="Back to round 1 (Shift+R)"><svg viewBox="0 0 24 24"><path d="M6 5v14M18 6l-8 6 8 6z"/></svg></button>
+    <button class="icon-btn" data-act="restart" title="Restart this phase (R)"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg></button>
+    <button class="icon-btn" data-act="toggle" title="Start / pause (Space)">
+      <svg class="ic-play" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></svg>
+      <svg class="ic-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>
+    </button>
+    <button class="icon-btn" data-act="skip" title="Skip to next phase / skip lunch (S)"><svg viewBox="0 0 24 24"><path d="M18 5v14M6 6l8 6-8 6z"/></svg></button>
+    <button class="icon-btn" data-act="notes" title="Notes (N)"><svg viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10M4 6l1.2 1.2L7.5 5M4 12l1.2 1.2L7.5 11M4 18l1.2 1.2L7.5 17"/></svg></button>
+    <button class="icon-btn" data-act="settings" title="Settings (,)"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+  </nav>
+
+  <aside id="notes" aria-label="Notes">
+    <header>
+      <label class="nsearch"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input type="search" id="nSearch" placeholder="Search" autocomplete="off"></label>
+      <button class="icon-btn" data-act="notes" title="Close (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </header>
+    <div class="sqs" id="nSquares"></div>
+    <div id="nEdit"></div>
+    <nav class="ntabs" id="nTabs"></nav>
+    <textarea class="nadd" id="nAdd" rows="1" maxlength="2000"></textarea>
+    <div class="nlist" id="nList"></div>
+  </aside>
+
+  <aside id="panel" aria-label="Settings">
+    <header><h2>Settings</h2><button class="icon-btn" data-act="close" title="Close (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+
+    <h3>Auto start</h3>
+    <div class="card" id="autoCard">
+      <div class="row"><span id="autoText">Start once at</span>
+        <span class="row-end"><input type="time" id="autoTime"><button type="button" class="text-btn" data-act="auto" id="autoBtn">Set</button></span></div>
+    </div>
+
+    <h3>Clock</h3>
+    <div class="card">
+      <div class="row stack"><span>Current time while timer runs</span>
+        <div class="seg">
+          <label><input type="radio" name="realTime" value="big"><span>Big</span></label>
+          <label><input type="radio" name="realTime" value="small"><span>Small</span></label>
+          <label><input type="radio" name="realTime" value="none"><span>Hidden</span></label>
+        </div>
+        <p class="hint">Big replaces the timer. Before start and during lunch, the current time is always shown big.</p></div>
+      <div class="row"><span>Format</span>
+        <div class="seg">
+          <label><input type="radio" name="clockFormat" value="24"><span>24h</span></label>
+          <label><input type="radio" name="clockFormat" value="12"><span>12h</span></label>
+        </div></div>
+    </div>
+
+    <h3>Timer</h3>
+    <div class="card">
+      <div class="row stack"><span>Preset</span>
+        <div class="seg">
+          <label><input type="radio" name="preset" value="25-5-15"><span>25 / 5</span></label>
+          <label><input type="radio" name="preset" value="50-10-20"><span>50 / 10</span></label>
+          <label><input type="radio" name="preset" value="90-15-30"><span>90 / 15</span></label>
+          <label><input type="radio" name="preset" value="custom"><span>Custom</span></label>
+        </div></div>
+      <div class="row"><span>Focus</span><span class="num"><input type="number" min="1" max="240" data-key="focus">min</span></div>
+      <div class="row"><span>Short break</span><span class="num"><input type="number" min="1" max="240" data-key="short">min</span></div>
+      <div class="row"><span>Long break</span><span class="num"><input type="number" min="1" max="240" data-key="long">min</span></div>
+      <div class="row"><span>Rounds before long break</span><span class="num"><input type="number" min="1" max="12" data-key="rounds"></span></div>
+    </div>
+
+    <h3>Lunch</h3>
+    <div class="card">
+      <div class="row"><span>Pause for lunch</span><input type="checkbox" class="switch" data-key="lunchOn"></div>
+      <div class="row"><span>Time</span>
+        <span class="range"><input type="time" data-key="lunchStart">–<input type="time" data-key="lunchEnd"></span></div>
+    </div>
+
+    <h3>Display</h3>
+    <div class="card">
+      <div class="row stack"><span>Progress</span>
+        <div class="seg">
+          <label><input type="radio" name="visual" value="ring"><span>Ring</span></label>
+          <label><input type="radio" name="visual" value="horizon"><span>Line</span></label>
+          <label><input type="radio" name="visual" value="edge"><span>Bar</span></label>
+          <label><input type="radio" name="visual" value="wash"><span>Tint</span></label>
+          <label><input type="radio" name="visual" value="none"><span>None</span></label>
+        </div></div>
+      <div class="row stack"><span>Phase label</span>
+        <div class="seg">
+          <label><input type="radio" name="labelMode" value="full"><span>Phase + timer</span></label>
+          <label><input type="radio" name="labelMode" value="word"><span>Phase</span></label>
+          <label><input type="radio" name="labelMode" value="auto"><span>Auto</span></label>
+        </div>
+        <p class="hint">Auto stays hidden until the phase changes. Hover the label to see the timer.</p></div>
+      <div class="row"><span>Label position</span>
+        <div class="seg">
+          <label><input type="radio" name="labelPos" value="left"><span>Left</span></label>
+          <label><input type="radio" name="labelPos" value="right"><span>Right</span></label>
+        </div></div>
+      <div class="row"><span>Pin corner</span>
+        <div class="seg">
+          <label title="Top left"><input type="radio" name="pinCorner" value="tl"><span>↖</span></label>
+          <label title="Top right"><input type="radio" name="pinCorner" value="tr"><span>↗</span></label>
+          <label title="Bottom left"><input type="radio" name="pinCorner" value="bl"><span>↙</span></label>
+          <label title="Bottom right"><input type="radio" name="pinCorner" value="br"><span>↘</span></label>
+        </div></div>
+      <div class="row"><span>Breathing in breaks</span><input type="checkbox" class="switch" data-key="breathing"></div>
+      <div class="row"><span>Theme</span>
+        <div class="seg">
+          <label><input type="radio" name="theme" value="auto"><span>System</span></label>
+          <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+          <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+        </div></div>
+    </div>
+
+    <h3>Reminders</h3>
+    <div class="card">
+      <div class="row"><span>Soft chime</span><input type="checkbox" class="switch" data-key="sound"></div>
+      <div class="row"><span>Volume</span><input type="range" min="5" max="100" step="5" data-key="volume"></div>
+      <div class="row"><span>Desktop notifications</span>
+        <span class="row-end"><button type="button" class="text-btn" data-act="testNotify">Test</button><input type="checkbox" class="switch" data-key="notify"></span></div>
+    </div>
+    <p class="note" id="note"></p>
+
+    <h3>Notes</h3>
+    <div class="card">
+      <div class="row"><span>Counts on squares</span><input type="checkbox" class="switch" data-key="sqCounts"></div>
+    </div>
+
+    <h3>Keys</h3>
+    <dl class="card keys">
+      <dt>Space</dt><dd>Start / pause</dd>
+      <dt>S</dt><dd>Skip phase (or skip lunch)</dd>
+      <dt>R</dt><dd>Restart this phase</dd>
+      <dt>Shift+R</dt><dd>Back to round 1</dd>
+      <dt>F</dt><dd>Full screen</dd>
+      <dt>,</dt><dd>Settings</dd>
+      <dt>N</dt><dd>Notes</dd>
+      <dt>I</dt><dd>Jot an idea (kept in Ideas)</dd>
+    </dl>
+  </aside>
+
+  <div id="toast" role="status"></div>
+  <div id="capture"><input id="capIn" maxlength="500" autocomplete="off" placeholder="An idea… Enter keeps it in Ideas"></div>
+  <div id="pin">
+    <button type="button" class="icon-btn" id="pinIcon" data-act="pin" title="Pin what to pick up after the break"><svg viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3 3H7l3-3zM12 12v8"/></svg></button>
+    <div id="pinBox">
+      <textarea id="pinIn" maxlength="500" placeholder="What to pick up after the break…"></textarea>
+      <div class="pin-acts">
+        <button type="button" class="icon-btn small" data-act="pinCancel" title="Cancel (no pin)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        <button type="button" class="text-btn" data-act="pinSave">Pin</button>
+      </div>
+    </div>
+    <div id="pinNote">
+      <p id="pinText"></p>
+      <div class="pin-acts">
+        <span class="pin-label">Pick up</span>
+        <button type="button" class="text-btn" data-act="pinClose">Close</button>
+      </div>
+    </div>
+  </div>
+  <div id="radial" role="menu">
+    <button type="button" class="r-tl" data-act="toggle">
+      <svg class="ic-play" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></svg>
+      <svg class="ic-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>
+      <span id="rToggle">Start</span></button>
+    <button type="button" class="r-ml" data-act="pin"><svg viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3 3H7l3-3zM12 12v8"/></svg><span>Pin</span></button>
+    <button type="button" class="r-bl" data-act="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>Settings</span></button>
+    <button type="button" class="r-r" data-act="notes"><svg viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10M4 6l1.2 1.2L7.5 5M4 12l1.2 1.2L7.5 11M4 18l1.2 1.2L7.5 17"/></svg><span>Notes</span></button>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const root = document.documentElement, body = document.body;
+  const [arc, hfill, efill, wfill, promptEl, label, wordEl, timeEl, hmEl, ampmEl, subEl, dots, panel, favicon] =
+    ['arc', 'hfill', 'efill', 'wfill', 'prompt', 'label', 'word', 'time', 'hm', 'ampm', 'sub', 'dots', 'panel', 'favicon'].map($);
+  const [autoCard, autoText, autoTime, autoBtn, toastEl] = ['autoCard', 'autoText', 'autoTime', 'autoBtn', 'toast'].map($);
+  const [pinEl, pinIn, pinTextEl] = ['pin', 'pinIn', 'pinText'].map($);
+
+  const KEY = 'softclock.settings';
+  const DEFAULTS = {
+    focus: 25, short: 5, long: 15, rounds: 4,
+    lunchOn: true, lunchStart: '12:00', lunchEnd: '13:00',
+    realTime: 'small', clockFormat: '24',
+    labelPos: 'right', labelMode: 'word', visual: 'ring', breathing: false, theme: 'auto',
+    notify: false, sound: false, volume: 40,
+    autoAt: 0,  // one scheduled auto start (timestamp), 0 = none
+    pinCorner: 'tl', pinNext: '', pinShown: '',  // pick-up pin: waiting for the break to end / showing now
+    pinDraft: '',  // what the pin box holds; kept on Cancel, cleared when the next pin time begins
+    sqCounts: false,  // small card counts on the Notes squares
+  };
+  const PRESETS = { '25-5-15': [25, 5, 15], '50-10-20': [50, 10, 20], '90-15-30': [90, 15, 30] };
+  const WORD = { idle: 'Ready', focus: 'Focus', short: 'Short break', long: 'Long break', lunch: 'Lunch' };
+  const PROMPTS = {
+    short: ['A moment for your eyes', 'A little water, maybe', 'Somewhere far away', 'A slow breath or two', 'Water sounds nice', 'Eyes can rest now'],
+    long: ['A little walk, maybe', 'A good time to stretch', 'Some water and a wander', 'The desk can wait', 'A bit of fresh air'],
+  };
+  const promptIdx = { short: 0, long: 0 };
+
+  // ---------- settings ----------
+  const load = () => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { return { ...DEFAULTS }; } };
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch {} };
+  let s = load();
+
+  // ---------- timer state ----------
+  const st = {
+    started: false, running: false, phase: 'focus', round: 1,
+    total: 0, remaining: 0, endAt: 0, prompt: '',
+    lunch: false, resumeAfterLunch: false, lunchSkipped: '',
+  };
+  let endTimer = 0;
+
+  const now = () => Date.now();
+  const mins = (k) => Math.max(1, +s[k] || DEFAULTS[k]) * 60000;
+  const dayKey = () => new Date().toDateString();
+  const todayAt = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); const d = new Date(); d.setHours(h, m || 0, 0, 0); return d.getTime(); };
+  const lunchBounds = () => ({ start: todayAt(s.lunchStart), end: todayAt(s.lunchEnd) });
+  const remaining = () => st.lunch ? lunchBounds().end - now() : st.running ? st.endAt - now() : st.remaining;
+
+  function inLunch() {
+    if (!s.lunchOn || st.lunchSkipped === dayKey()) return false;
+    const { start, end } = lunchBounds(), t = now();
+    return end > start && t >= start && t < end;
+  }
+
+  function schedule() {
+    clearTimeout(endTimer);
+    if (st.running) endTimer = setTimeout(tick, Math.max(0, st.endAt - now()) + 20);
+  }
+
+  function nextPrompt(phase) {
+    const list = PROMPTS[phase];
+    return list[promptIdx[phase]++ % list.length];
+  }
+
+  function setPhase(phase, round) {
+    const fromBreak = st.phase !== 'focus';
+    st.phase = phase;
+    st.round = round;
+    st.total = st.remaining = mins(phase);
+    if (st.running) st.endAt = now() + st.total;
+    st.prompt = phase === 'focus' ? '' : nextPrompt(phase);
+    schedule();
+    revealLabel();
+    if (phase === 'focus' && fromBreak) revealPin();
+    render(true);
+  }
+
+  function advance(auto) {
+    if (st.phase === 'focus') setPhase(st.round >= s.rounds ? 'long' : 'short', st.round);
+    else setPhase('focus', st.phase === 'long' ? 1 : st.round + 1);
+    if (auto) notify(WORD[st.phase], st.prompt || 'Back to focus');
+  }
+
+  function start() {
+    if (st.lunch || st.running) return;
+    st.started = st.running = true;
+    st.endAt = now() + st.remaining;
+    schedule();
+    render(true);
+  }
+  function pause() {
+    if (!st.running) return;
+    st.remaining = Math.max(0, st.endAt - now());
+    st.running = false;
+    schedule();
+    render(true);
+  }
+  const toggle = () => st.running ? pause() : start();
+
+  function restartPhase() {
+    if (st.lunch) return;
+    st.total = st.remaining = mins(st.phase);
+    if (st.running) st.endAt = now() + st.total;
+    schedule();
+    render(true);
+  }
+  function resetAll() {
+    if (!st.lunch) setPhase('focus', 1);
+  }
+  function skip() {
+    if (st.lunch) { st.lunchSkipped = dayKey(); return tick(); }
+    st.started = true;
+    advance(false);
+  }
+
+  function checkLunch() {
+    const want = inLunch();
+    if (want && !st.lunch) {
+      st.resumeAfterLunch = st.running;
+      pause();
+      st.lunch = true;
+      revealLabel();
+      notify('Lunch', 'Lunch time');
+      render(true);
+    } else if (!want && st.lunch) {
+      st.lunch = false;
+      setPhase('focus', 1);
+      revealPin();
+      if (st.resumeAfterLunch) start();
+      notify('Lunch is over', st.resumeAfterLunch ? 'Back to focus' : 'Ready');
+    }
+  }
+
+  function tick() {
+    checkLunch();
+    checkAuto();
+    if (st.running && st.endAt - now() <= 0) advance(true);
+    else render(false);
+  }
+
+  // ---------- auto start ----------
+  // next time this hh:mm comes around: today if still ahead, else tomorrow
+  function nextAt(hhmm) {
+    const [h, m] = hhmm.split(':').map(Number), d = new Date();
+    d.setHours(h, m || 0, 0, 0);
+    if (d.getTime() <= now()) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  }
+
+  function checkAuto() {
+    if (!s.autoAt || now() < s.autoAt) return;
+    s.autoAt = 0;
+    save();
+    renderAuto();
+    chime();
+    if (st.running) toast('Auto start · Tomato is already ticking along');
+    else if (st.lunch) { st.resumeAfterLunch = true; toast('Auto start · Tomato will begin after lunch'); }
+    else start();
+  }
+
+  function autoAction() {
+    if (s.autoAt) s.autoAt = 0;
+    else if (autoTime.value) s.autoAt = nextAt(autoTime.value);
+    else return autoTime.focus();
+    save();
+    renderAuto();
+  }
+
+  function renderAuto() {
+    const on = !!s.autoAt, d = new Date(s.autoAt);
+    autoText.textContent = on ? 'Starting at' : 'Start once at';
+    if (on && document.activeElement !== autoTime) {
+      autoTime.value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+    autoBtn.textContent = on ? 'Delete' : 'Set';
+    autoCard.classList.toggle('on', on);
+  }
+
+  // ---------- pick-up pin ----------
+  const FIVE = 5 * 60000;
+  // pin time: from 5 min before a break (or lunch) until the break ends
+  function inPinTime() {
+    if (st.lunch) return true;
+    const toLunch = s.lunchOn && st.lunchSkipped !== dayKey() ? lunchBounds().start - now() : -1;
+    if (toLunch > 0 && toLunch <= FIVE) return true;
+    if (!st.started) return false;
+    return st.phase !== 'focus' || remaining() <= FIVE;
+  }
+  // the corner icon: pin time, unless a pin is already waiting (the pie's Pin can still reopen it)
+  const pinWindow = () => !s.pinNext && !pinEl.classList.contains('editing') && inPinTime();
+
+  // writing pauses the timer until Pin or ×
+  let pausedByPin = false;
+  function openPin() {
+    // already open (e.g. icon, then the pie's Pin): keep what is being typed
+    if (pinEl.classList.contains('editing')) return pinIn.focus();
+    if (st.running && !st.lunch) { pause(); pausedByPin = true; }
+    pinIn.value = s.pinDraft;
+    pinEl.classList.add('editing');
+    pinIn.focus();
+    render(true);
+  }
+  // Pin keeps the text for after the break; Cancel means it won't show (the corner icon comes back),
+  // but the text stays in the box until the next pin time begins
+  function closePin(keep) {
+    s.pinDraft = pinIn.value.trim();
+    s.pinNext = keep ? s.pinDraft : '';
+    save();
+    pinEl.classList.remove('editing');
+    if (pausedByPin) { pausedByPin = false; start(); }
+    render(true);
+  }
+  // a break just ended: the waiting pin comes back in its corner until closed
+  function revealPin() {
+    if (!s.pinNext) return;
+    s.pinShown = s.pinNext;
+    s.pinNext = '';
+    save();
+    renderPin();
+  }
+  function closeShownPin() {
+    s.pinShown = '';
+    save();
+    renderPin();
+  }
+  function renderPin() {
+    pinTextEl.textContent = s.pinShown;
+    pinEl.classList.toggle('shown', !!s.pinShown);
+  }
+  // a new pin time begins: the old Pick up note goes away and the box starts empty
+  let wasPinTime = false;
+  function checkPinTime() {
+    const now_ = inPinTime();
+    if (now_ && !wasPinTime) {
+      s.pinShown = '';
+      if (!s.pinNext) s.pinDraft = '';
+      save();
+      renderPin();
+    }
+    wasPinTime = now_;
+  }
+
+  let toastT = 0;
+  function toast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(toastT);
+    toastT = setTimeout(() => toastEl.classList.remove('show'), 5000);
+  }
+
+  // ---------- notifications ----------
+  // no shared tag: a same-tag replacement can update silently on Windows without a toast,
+  // so close the previous one ourselves to avoid stacking
+  let lastNotification = null;
+  function showNotification(title, text) {
+    try {
+      if (lastNotification) lastNotification.close();
+      const n = new Notification(title, { body: text, silent: true, icon: favicon.href });
+      n.onclick = () => { window.focus(); n.close(); };
+      lastNotification = n;
+      return true;
+    } catch (err) {
+      $('note').textContent = 'Could not show a notification: ' + err.message;
+      return false;
+    }
+  }
+  // end-of-phase signal: soft chime + desktop notification, each only if switched on
+  function notify(title, text) {
+    chime();
+    if (s.notify && 'Notification' in window && Notification.permission === 'granted') showNotification(title, text);
+  }
+
+  // ---------- chime ----------
+  // browsers only allow audio after a user gesture, so the context is created/resumed on the first click or key
+  let audioCtx = null;
+  function unlockAudio() {
+    if (!s.sound) return;
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch {}
+  }
+  function chime() {
+    const vol = s.volume / 100 * 0.25;
+    if (!s.sound || vol <= 0) return;
+    unlockAudio();
+    if (!audioCtx) return;
+    // one soft bell: C5 with two quiet overtones, gentle attack, ~2.5s fade
+    const t = audioCtx.currentTime, out = audioCtx.createGain();
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(vol, t + 0.04);
+    out.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
+    out.connect(audioCtx.destination);
+    [[523.25, 1], [1046.5, 0.25], [1568, 0.08]].forEach(([f, g]) => {
+      const o = audioCtx.createOscillator(), og = audioCtx.createGain();
+      o.type = 'sine';
+      o.frequency.value = f;
+      og.gain.value = g;
+      o.connect(og).connect(out);
+      o.start(t);
+      o.stop(t + 2.7);
+    });
+  }
+  addEventListener('pointerdown', unlockAudio);
+  addEventListener('keydown', unlockAudio);
+  const BLOCKED = 'The browser is blocking notifications for this page. Allow them in site settings (icon left of the address bar).';
+  async function askPermission() {
+    const note = $('note');
+    note.textContent = '';
+    if (!('Notification' in window)) { note.textContent = 'Notifications are not supported here.'; return false; }
+    if (Notification.permission === 'granted') return true;
+    const r = await Notification.requestPermission();
+    if (r !== 'granted') note.textContent = BLOCKED;
+    return r === 'granted';
+  }
+  async function testNotify() {
+    if (!(await askPermission())) return;
+    if (showNotification('Tomato', 'This is how a reminder looks')) {
+      $('note').textContent = 'Test sent. If nothing popped up, check Windows Settings → System → Notifications (browser allowed, Do not disturb off).';
+    }
+  }
+  function notifyStatus() {
+    if (!s.notify) return;
+    if (!('Notification' in window)) $('note').textContent = 'Notifications are not supported here.';
+    else if (Notification.permission !== 'granted') $('note').textContent = BLOCKED;
+  }
+
+  // ---------- rendering ----------
+  const C = 2 * Math.PI * 134;
+  arc.style.strokeDasharray = C;
+  let shownPrompt = null, revealT = 0;
+
+  function fmt(ms) {
+    const t = Math.ceil(ms / 1000), h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), sec = t % 60;
+    const p2 = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${p2(m)}:${p2(sec)}` : `${p2(m)}:${p2(sec)}`;
+  }
+
+  function clockParts() {
+    const d = new Date(), m = String(d.getMinutes()).padStart(2, '0');
+    let h = d.getHours(), ap = '';
+    if (s.clockFormat === '12') { ap = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12; }
+    else h = String(h).padStart(2, '0');
+    return [`${h}:${m}`, ap];
+  }
+  const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+
+  // big display: current time before start / during lunch, else whole minutes passed in this phase
+  function renderCenter(rem, total) {
+    const [hm, ap] = clockParts();
+    const timer = st.started && !st.lunch && s.realTime !== 'big';
+    const sub = timer && s.realTime === 'small';
+    setText(hmEl, timer ? String(Math.floor((total - rem) / 60000)) : hm);
+    setText(ampmEl, timer ? 'min' : ap);
+    setText(subEl, sub ? `${hm} ${ap}`.trim() : '');
+    body.classList.toggle('sub-on', sub);
+  }
+
+  function revealLabel() {
+    label.classList.add('reveal');
+    clearTimeout(revealT);
+    revealT = setTimeout(() => label.classList.remove('reveal'), 60000);
+  }
+
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 32;
+  const cx = cv.getContext('2d');
+  let iconSig = '';
+  function drawIcon(key, p) {
+    const color = getComputedStyle(root).getPropertyValue('--' + key).trim();
+    const sig = key + color + Math.round(p * 24) + st.running;
+    if (sig === iconSig) return;
+    iconSig = sig;
+    cx.clearRect(0, 0, 32, 32);
+    cx.lineWidth = 4;
+    cx.lineCap = 'round';
+    cx.strokeStyle = 'rgba(128,128,128,.35)';
+    cx.beginPath(); cx.arc(16, 16, 12, 0, Math.PI * 2); cx.stroke();
+    cx.strokeStyle = cx.fillStyle = color;
+    if (p > 0) { cx.beginPath(); cx.arc(16, 16, 12, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p); cx.stroke(); }
+    cx.beginPath(); cx.arc(16, 16, st.running || st.lunch ? 5 : 3, 0, Math.PI * 2); cx.fill();
+    favicon.href = cv.toDataURL();
+  }
+
+  function renderDots() {
+    const n = Math.max(s.rounds, st.round), done = st.phase === 'focus' ? st.round - 1 : st.round;
+    if (dots.childElementCount !== n) dots.innerHTML = '<i></i>'.repeat(n);
+    [...dots.children].forEach((d, i) => {
+      d.className = i < done ? 'on' : i === done && st.started && st.phase === 'focus' ? 'cur' : '';
+    });
+  }
+
+  function render(force) {
+    checkPinTime();
+    const key = st.lunch ? 'lunch' : st.started ? st.phase : 'idle';
+    const { start, end } = lunchBounds();
+    const total = st.lunch ? end - start : st.total;
+    const rem = Math.max(0, remaining());
+    const p = total ? Math.min(1, Math.max(0, 1 - rem / total)) : 0;
+    const paused = st.started && !st.running && !st.lunch;
+
+    document.title = key === 'idle' ? 'Tomato'
+      : (paused ? '‖ ' : '') + WORD[key] + (s.labelMode === 'full' ? ` · ${Math.ceil(rem / 60000)}m` : '');
+    drawIcon(key, p);
+    if (document.hidden && !force) return;
+
+    root.dataset.phase = key;
+    body.classList.toggle('running', st.running);
+    body.classList.toggle('pin-avail', pinWindow());
+    body.classList.toggle('breathing', s.breathing && st.running && st.phase !== 'focus');
+    arc.style.strokeDashoffset = C * (1 - p);
+    hfill.style.width = efill.style.width = wfill.style.height = p * 100 + '%';
+    wordEl.textContent = WORD[key] + (paused ? ' · paused' : '');
+    timeEl.textContent = fmt(rem);
+    renderCenter(rem, total);
+
+    const text = st.lunch ? 'Lunch time'
+      : key === 'idle' ? 'Space to start'
+      : st.phase === 'focus' ? '' : st.prompt;
+    if (text !== shownPrompt) {
+      shownPrompt = text;
+      if (text) promptEl.textContent = text;
+      promptEl.classList.toggle('show', !!text);
+    }
+    renderDots();
+  }
+
+  // ---------- settings panel ----------
+  const presetOf = () => Object.keys(PRESETS).find((k) => PRESETS[k].join() === [s.focus, s.short, s.long].join()) || 'custom';
+
+  function fillForm() {
+    panel.querySelectorAll('[data-key]').forEach((i) => {
+      if (i.type === 'checkbox') i.checked = !!s[i.dataset.key];
+      else i.value = s[i.dataset.key];
+    });
+    panel.querySelectorAll('input[type="radio"]').forEach((r) => {
+      r.checked = (r.name === 'preset' ? presetOf() : String(s[r.name])) === r.value;
+    });
+  }
+
+  function applySettings() {
+    root.dataset.theme = s.theme;
+    body.dataset.visual = s.visual;
+    body.dataset.labelPos = s.labelPos;
+    body.dataset.labelMode = s.labelMode;
+    body.dataset.pinCorner = s.pinCorner;
+    // an untouched phase picks up new durations right away
+    if (!st.lunch && !st.running && st.remaining === st.total) st.total = st.remaining = mins(st.phase);
+    iconSig = '';
+    render(true);
+  }
+
+  panel.addEventListener('change', async (e) => {
+    const el = e.target;
+    // while one is waiting, editing the time moves it; before that, Set schedules it
+    if (el === autoTime) {
+      if (s.autoAt && el.value) { s.autoAt = nextAt(el.value); save(); }
+      return renderAuto();
+    }
+    if (el.name === 'preset') {
+      if (PRESETS[el.value]) [s.focus, s.short, s.long] = PRESETS[el.value];
+    } else if (el.type === 'radio') {
+      s[el.name] = el.value;
+    } else if (el.dataset.key) {
+      const k = el.dataset.key;
+      let v = el.value;
+      if (el.type === 'checkbox') v = el.checked;
+      else if (el.type === 'number') v = Math.min(+el.max, Math.max(+el.min, Math.round(+el.value) || DEFAULTS[k]));
+      else if (el.type === 'range') v = +el.value;
+      else if (el.type === 'time' && !v) v = DEFAULTS[k];
+      if (k === 'notify' && v) v = await askPermission();
+      s[k] = v;
+      if ((k === 'sound' && v) || k === 'volume') chime();  // preview
+    }
+    save();
+    fillForm();
+    applySettings();
+  });
+
+  function togglePanel(open = !body.classList.contains('panel-open')) {
+    body.classList.toggle('panel-open', open);
+    // settings and notes are never open together
+    if (open) { body.classList.remove('notes-open'); fillForm(); renderAuto(); notifyStatus(); }
+    wake();
+  }
+
+  // ---------- notes ----------
+  const [notesEl, nSearch, nSquares, nEdit, nTabs, nAdd, nList, capEl, capIn] =
+    ['notes', 'nSearch', 'nSquares', 'nEdit', 'nTabs', 'nAdd', 'nList', 'capture', 'capIn'].map($);
+  const NKEY = 'softclock.notes';
+  const TAB = { doing: 'Doing', todo: 'Todo', ideas: 'Ideas', archive: 'Archive' };
+  const EMPTY = { doing: 'Nothing on the go', todo: 'All clear for now', ideas: 'Ideas will gather here', archive: 'Nothing archived yet' };
+  const COLORS = ['#6d8db0', '#5f9e9a', '#7fa36b', '#c3976a', '#c47b6b', '#b07aa1', '#8a82b8', '#8c8f94'];
+  const LIMIT = 8;
+  const GRIP = '<svg viewBox="0 0 8 14"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></svg>';
+
+  // cards keep one shared order; each tab/square view is a filter of it, so dragging just moves a card in that order
+  const N = (() => {
+    try { const d = JSON.parse(localStorage.getItem(NKEY) || 'null'); if (d && Array.isArray(d.cards)) return d; } catch {}
+    return { squares: [], cards: [], view: {} };
+  })();
+  // a card's sq is '' when it belongs to no square (it then lives only in ANY); old Inbox cards become that
+  N.cards.forEach((c) => { if (c.sq === 'inbox') c.sq = ''; });
+  const nsave = () => { try { localStorage.setItem(NKEY, JSON.stringify(N)); } catch {} };
+  const squares = () => N.squares;
+  const sqOf = (id) => N.squares.find((q) => q.id === id);
+  const cardOf = (id) => N.cards.find((c) => c.id === id);
+  const uid = () => now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  const firstLine = (t) => (t || '').split('\n').find((l) => l.trim()) || '';
+  const day = (t) => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  const fit = (ta) => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+
+  // view: square (or 'all') + tab are remembered; open = the one unfolded card; q = search; edit = square being edited
+  const view = N.view || {};
+  const nv = {
+    sq: view.sq === 'all' || squares().some((q) => q.id === view.sq) ? view.sq : 'all',
+    tab: TAB[view.tab] ? view.tab : 'doing',
+    open: '', q: '', more: false, edit: '', color: COLORS[0],
+  };
+  function viewChanged() {
+    N.view = { sq: nv.sq, tab: nv.tab };
+    nsave();
+    renderNotes();
+  }
+
+  const IC_RESTORE = '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg>';
+  const IC_DELETE = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>';
+  const IC_ARCHIVE = '<svg viewBox="0 0 24 24"><path d="M4 5h16v4H4zM5 9v10h14V9M10 13h4"/></svg>';
+
+  function visible() {
+    const list = N.cards.filter((c) => c.tab === nv.tab && (nv.sq === 'all' || c.sq === nv.sq));
+    return nv.tab === 'archive' ? list.sort((a, b) => b.at - a.at) : list;
+  }
+
+  function cardHtml(c) {
+    const q = sqOf(c.sq);
+    const grip = nv.q || c.tab === 'archive' ? '' : `<span class="grip" draggable="true" title="Drag to reorder">${GRIP}</span>`;
+    const mini = !(nv.sq === 'all' || nv.q) ? ''
+      : q ? `<i class="mini" style="--c:${q.color}">${esc(q.code)}</i>` : '<i class="mini any">ANY</i>';
+    const when = c.tab === 'archive' ? `${c.done ? 'Done' : 'Archived'} · ${day(c.at)}` : '';
+    // archived cards show Restore / Delete even while folded (icons only), with words once opened
+    const archBtns = (words) => c.tab !== 'archive' ? ''
+      : `<button type="button" class="text-btn ibtn" data-n="restore" title="Restore">${IC_RESTORE}${words ? '<span>Restore</span>' : ''}</button>`
+        + `<button type="button" class="text-btn ibtn" data-n="del" title="Delete">${IC_DELETE}${words ? '<span>Delete</span>' : ''}</button>`;
+    if (c.id !== nv.open) {
+      // folded: the title if there is one, else the first line of the details, in the same plain style; cut with … when too long
+      const text = esc(c.title || firstLine(c.body) || 'Empty note');
+      const meta = nv.q ? TAB[c.tab] : when;
+      return `<div class="ncard" data-id="${c.id}">${grip}${mini}<span class="prev">${text}</span>${meta ? `<span class="where">${meta}</span>` : ''}${c.tab === 'archive' ? archBtns(false) : `<button type="button" class="text-btn ibtn" data-n="archive" title="Archive">${IC_ARCHIVE}</button>`}</div>`;
+    }
+    const acts = c.tab === 'archive'
+      ? `<span class="where">${when}</span>${archBtns(true)}`
+      : ['doing', 'todo', 'ideas'].filter((k) => k !== c.tab).map((k) => `<button type="button" class="text-btn" data-n="move" data-to="${k}">→ ${TAB[k]}</button>`).join('')
+        + `<select class="nsq" title="Move to another square"><option value="">ANY</option>${squares().map((o) => `<option value="${o.id}"${o.id === c.sq ? ' selected' : ''}>${esc(o.code)}</option>`).join('')}</select>`
+        + '<button type="button" class="text-btn push" data-n="archive">Archive</button>';
+    return `<div class="ncard open" data-id="${c.id}">
+      <div class="nhead">${grip}${mini}<input class="ntitle" placeholder="Title" maxlength="120" value="${esc(c.title)}"><button type="button" class="icon-btn fold" data-n="fold" title="Fold (Esc)"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>
+      <textarea class="ntext" placeholder="Details" rows="2">${esc(c.body)}</textarea>
+      <div class="nacts">${acts}</div></div>`;
+  }
+
+  function renderNotes() {
+    const cur = nv.sq === 'all' ? null : sqOf(nv.sq);
+    notesEl.style.setProperty('--sc', cur ? cur.color : 'var(--accent)');
+    const count = (tab, sq) => N.cards.filter((c) => c.tab === tab && (sq === 'all' || c.sq === sq)).length;
+    const tip = { all: 'All squares' };
+    nSquares.innerHTML = [{ id: 'all', code: 'ANY', color: 'var(--accent)' }, ...squares()].map((q) => {
+      const n = count(nv.tab, q.id);
+      return `<button type="button" class="sq${q.id === 'all' ? ' all' : ''}${q.id === nv.sq && !nv.q ? ' sel' : ''}" data-sq="${q.id}" style="--c:${q.color}"${q.id === 'all' ? '' : ' draggable="true"'}`
+        + `${n && s.sqCounts ? ` data-count="${n}"` : ''} title="${tip[q.id] || 'Right-click to edit'}">${esc(q.code)}</button>`;
+    }).join('') + '<button type="button" class="sq add" data-n="newSq" title="New square">+</button>';
+    nTabs.hidden = !!nv.q;
+    nTabs.innerHTML = Object.entries(TAB).map(([k, w]) => {
+      const n = count(k, nv.sq);
+      return `<button type="button" class="ntab${k === nv.tab ? ' sel' : ''}" data-tab="${k}">${w}${n ? `<span>${n}</span>` : ''}</button>`;
+    }).join('');
+    nAdd.hidden = !!nv.q || nv.tab === 'archive';
+    nAdd.placeholder = `Write here · goes to ${cur ? cur.code : 'ANY'} · ${TAB[nv.tab]}`;
+    renderList();
+  }
+
+  function renderList() {
+    // search: cards whose title matches on top, then cards matched only in the body
+    if (nv.q) {
+      const q = nv.q.toLowerCase(), has = (t) => (t || '').toLowerCase().includes(q);
+      const part = (name, list) => list.length ? `<h4 class="nsec">${name}<span>${list.length}</span></h4>` + list.map(cardHtml).join('') : '';
+      nList.innerHTML = part('Title', N.cards.filter((c) => has(c.title)))
+        + part('Body', N.cards.filter((c) => !has(c.title) && has(c.body)))
+        || '<p class="nempty">Nothing matches</p>';
+      return;
+    }
+    const list = visible(), shown = nv.more ? list : list.slice(0, LIMIT);
+    nList.innerHTML = shown.map(cardHtml).join('')
+      + (list.length > shown.length ? `<button type="button" class="text-btn nmore" data-n="more">Show ${list.length - shown.length} more</button>` : '')
+      + (list.length ? '' : `<p class="nempty">${EMPTY[nv.tab]}</p>`);
+    const ta = nList.querySelector('.ntext');
+    if (ta) fit(ta);
+  }
+
+  function renderEdit() {
+    const q = nv.edit && nv.edit !== 'new' ? sqOf(nv.edit) : null;
+    nEdit.innerHTML = !nv.edit ? '' : `<div class="sqedit" style="--c:${nv.color}">
+      <input class="sqcode" maxlength="3" placeholder="ABC" spellcheck="false" autocomplete="off" value="${q ? esc(q.code) : ''}">
+      <span class="swatches">${COLORS.map((c) => `<button type="button" class="sw${c === nv.color ? ' sel' : ''}" data-color="${c}" style="--c:${c}"></button>`).join('')}</span>
+      <span class="row-end">${q ? '<button type="button" class="text-btn" data-n="sqDel" title="Its cards stay in ANY">Delete</button>' : ''}`
+      + `<button type="button" class="text-btn" data-n="sqCancel">Cancel</button><button type="button" class="text-btn" data-n="sqSave">${q ? 'Save' : 'Add'}</button></span></div>`;
+    if (nv.edit) nEdit.querySelector('.sqcode').focus();
+  }
+
+  function pickSquare(id) {
+    Object.assign(nv, { sq: id, open: '', more: false, edit: '', q: '' });
+    nSearch.value = '';
+    renderEdit();
+    viewChanged();
+  }
+  // right-click on a square: select it and open its editor (ANY stays as it is)
+  function editSquare(id) {
+    if (id !== nv.sq || nv.q) pickSquare(id);
+    Object.assign(nv, { edit: id, color: sqOf(id).color });
+    renderEdit();
+  }
+  function pickColor(color) {
+    nv.color = color;
+    const box = nEdit.firstElementChild;
+    box.style.setProperty('--c', color);
+    box.querySelectorAll('.sw').forEach((w) => w.classList.toggle('sel', w.dataset.color === color));
+  }
+  function sqSave() {
+    const input = nEdit.querySelector('.sqcode'), code = input.value.trim().toUpperCase();
+    if (!code) return input.focus();
+    if (nv.edit === 'new') {
+      const q = { id: uid(), code, color: nv.color };
+      N.squares.push(q);
+      Object.assign(nv, { sq: q.id, open: '', more: false });
+    } else Object.assign(sqOf(nv.edit), { code, color: nv.color });
+    nv.edit = '';
+    renderEdit();
+    viewChanged();
+  }
+  function deleteSquare() {
+    N.cards.forEach((c) => { if (c.sq === nv.edit) c.sq = ''; });
+    N.squares = N.squares.filter((q) => q.id !== nv.edit);
+    Object.assign(nv, { sq: 'all', edit: '', open: '' });
+    renderEdit();
+    viewChanged();
+  }
+
+  const toTop = (c) => { N.cards.splice(N.cards.indexOf(c), 1); N.cards.unshift(c); };
+  function moveCard(c, tab) {
+    if (tab === 'archive') return archiveCard(c, false);
+    c.tab = tab;
+    toTop(c);
+    nv.open = '';
+    nsave();
+    renderNotes();
+    toast(`Moved to ${TAB[tab]}`);
+  }
+  function archiveCard(c, done) {
+    Object.assign(c, { from: c.tab, tab: 'archive', at: now(), done });
+    nv.open = '';
+    nsave();
+    renderNotes();
+    toast(done ? 'Done · kept in Archive' : 'Moved to Archive');
+  }
+  function openCard(c) {
+    // a search result opens in its own square and tab
+    if (nv.q) {
+      Object.assign(nv, { q: '', sq: c.sq, tab: c.tab });
+      nSearch.value = '';
+      N.view = { sq: nv.sq, tab: nv.tab };
+      nsave();
+    }
+    nv.open = c.id;
+    if (visible().indexOf(c) >= LIMIT) nv.more = true;
+    renderNotes();
+    const el = nList.querySelector('.ncard.open');
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }
+  function addCard() {
+    const text = nAdd.value.trim();
+    if (!text) return;
+    N.cards.unshift({ id: uid(), sq: nv.sq === 'all' ? '' : nv.sq, tab: nv.tab, title: '', body: text });
+    nAdd.value = '';
+    nAdd.style.height = '';
+    nsave();
+    renderNotes();
+  }
+
+  // two-step archive / delete: first click asks, second click does it; clicking anywhere else puts it back
+  function sure(b) {
+    if (b.classList.contains('sure')) return true;
+    b.dataset.orig = b.innerHTML;
+    b.classList.add('sure');
+    (b.querySelector('span') || b).textContent = 'Sure?';
+    return false;
+  }
+  function unsure(except) {
+    notesEl.querySelectorAll('.sure').forEach((b) => {
+      if (b === except) return;
+      b.innerHTML = b.dataset.orig;
+      b.classList.remove('sure');
+    });
+  }
+
+  const NACT = {
+    newSq() { Object.assign(nv, { edit: 'new', color: COLORS[N.squares.length % COLORS.length] }); renderEdit(); },
+    sqSave,
+    sqCancel() { nv.edit = ''; renderEdit(); },
+    sqDel(c, b) { if (sure(b)) deleteSquare(); },
+    more() { nv.more = true; renderList(); },
+    fold() { nv.open = ''; renderList(); },
+    archive(c, b) { if (sure(b)) archiveCard(c, false); },
+    move: (c, b) => moveCard(c, b.dataset.to),
+    restore(c) {
+      c.tab = TAB[c.from] && c.from !== 'archive' ? c.from : 'todo';
+      delete c.from; delete c.at; delete c.done;
+      toTop(c);
+      nv.open = '';
+      nsave();
+      renderNotes();
+      toast(`Back in ${TAB[c.tab]}`);
+    },
+    del(c, b) {
+      if (!sure(b)) return;
+      N.cards.splice(N.cards.indexOf(c), 1);
+      nv.open = '';
+      nsave();
+      renderNotes();
+    },
+  };
+
+  // where the press began decides folding, so selecting text inside the card and letting go outside keeps it open
+  let downInOpen = false, downInNotes = false;
+  document.addEventListener('pointerdown', (e) => {
+    downInOpen = !!e.target.closest('.ncard.open');
+    downInNotes = !!e.target.closest('#notes');
+    unsure(e.target.closest('.sure'));
+    if (!e.target.closest('#radial')) closeRadial();
+    // a left click on the clock itself closes Settings / Notes; with a card open, the first click only folds the card
+    if (e.button === 0 && !e.target.closest('#notes, #panel, #controls, #pin, #radial, #capture')) {
+      if (body.classList.contains('panel-open')) togglePanel(false);
+      else if (body.classList.contains('notes-open')) {
+        if (nv.open) { nv.open = ''; renderList(); } else toggleNotes(false);
+      }
+    }
+  }, true);
+  // a click outside the open card folds it
+  document.addEventListener('click', (e) => {
+    if (nv.open && !downInOpen && !downInNotes && !notesEl.contains(e.target)) { nv.open = ''; renderList(); }
+  });
+
+  notesEl.addEventListener('click', (e) => {
+    const b = e.target.closest('button'), el = e.target.closest('.ncard'), c = el && cardOf(el.dataset.id);
+    if (nv.open && !downInOpen && !c) { nv.open = ''; renderList(); }
+    if (b) {
+      if (b.dataset.act) return;  // close button, handled with the other actions
+      b.blur();
+      if (b.dataset.sq) return pickSquare(b.dataset.sq);
+      if (b.dataset.tab) { Object.assign(nv, { tab: b.dataset.tab, open: '', more: false }); return viewChanged(); }
+      if (b.dataset.color) return pickColor(b.dataset.color);
+      if (b.dataset.n) return NACT[b.dataset.n](c, b);
+    }
+    if (c && !el.classList.contains('open')) openCard(c);
+  });
+
+  notesEl.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t === nAdd) return fit(t);
+    if (t === nSearch) {
+      Object.assign(nv, { q: t.value.trim(), open: '', more: false, edit: '' });
+      renderEdit();
+      return renderNotes();
+    }
+    const el = t.closest('.ncard'), c = el && cardOf(el.dataset.id);
+    if (!c) return;
+    if (t.classList.contains('ntitle')) c.title = t.value;
+    else if (t.classList.contains('ntext')) { c.body = t.value; fit(t); }
+    nsave();
+  });
+
+  notesEl.addEventListener('change', (e) => {
+    if (!e.target.matches('.nsq')) return;
+    const c = cardOf(e.target.closest('.ncard').dataset.id);
+    c.sq = e.target.value;
+    nsave();
+    if (nv.sq !== 'all') { nv.open = ''; toast(`Moved to ${c.sq ? sqOf(c.sq).code : 'ANY'}`); }
+    renderNotes();
+  });
+
+  // in an open card, Ctrl+Enter saves and folds it
+  notesEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    const t = e.target;
+    // add box: Enter adds, Shift+Enter starts a new line
+    if (t === nAdd) {
+      if (!e.shiftKey) { e.preventDefault(); addCard(); }
+      return;
+    }
+    if (t.classList.contains('sqcode')) return sqSave();
+    if (!t.matches('.ntitle, .ntext')) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const el = t.closest('.ncard'), c = cardOf(el.dataset.id);
+      Object.assign(c, { title: el.querySelector('.ntitle').value, body: el.querySelector('.ntext').value });
+      nsave();
+      nv.open = '';
+      return renderList();
+    }
+    if (t.classList.contains('ntitle')) { e.preventDefault(); t.closest('.ncard').querySelector('.ntext').focus(); }
+  });
+
+  // drag a card by its grip: onto another card to reorder, onto a tab or a square to move it there
+  // drag a square (not ANY) onto another square to reorder the squares
+  let dragId = '', dragSq = '';
+  const below = (el, e) => { const r = el.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
+  const rightOf = (el, e) => { const r = el.getBoundingClientRect(); return e.clientX > r.left + r.width / 2; };
+  const clearDrop = () => notesEl.querySelectorAll('.drop-before, .drop-after, .drop-on, .sq-before, .sq-after')
+    .forEach((el) => el.classList.remove('drop-before', 'drop-after', 'drop-on', 'sq-before', 'sq-after'));
+  function sqTarget(e) {
+    const t = e.target.closest('.sq[draggable]');
+    return t && t.dataset.sq !== dragSq ? t : null;
+  }
+  function dropTarget(e) {
+    const t = e.target.closest('.ncard, [data-tab], [data-sq]'), c = cardOf(dragId);
+    if (!t || !c || t.dataset.id === c.id || t.dataset.sq === 'all' || t.dataset.tab === c.tab || t.dataset.sq === c.sq) return null;
+    return t;
+  }
+  notesEl.addEventListener('dragstart', (e) => {
+    const sq = e.target.closest && e.target.closest('.sq[draggable]');
+    if (sq) {
+      dragSq = sq.dataset.sq;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', '');
+      return;
+    }
+    const g = e.target.closest && e.target.closest('.grip');
+    if (!g) return;
+    const el = g.closest('.ncard');
+    dragId = el.dataset.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', '');
+    e.dataTransfer.setDragImage(el, 16, 16);
+    el.classList.add('dragging');
+  });
+  notesEl.addEventListener('dragover', (e) => {
+    if (dragSq) {
+      clearDrop();
+      const t = sqTarget(e);
+      if (!t) return;
+      e.preventDefault();
+      return t.classList.add(rightOf(t, e) ? 'sq-after' : 'sq-before');
+    }
+    if (!dragId) return;
+    clearDrop();
+    const t = dropTarget(e);
+    if (!t) return;
+    e.preventDefault();
+    t.classList.add(t.dataset.id ? (below(t, e) ? 'drop-after' : 'drop-before') : 'drop-on');
+  });
+  notesEl.addEventListener('drop', (e) => {
+    if (dragSq) {
+      const t = sqTarget(e), q = sqOf(dragSq);
+      if (!t) return;
+      e.preventDefault();
+      N.squares.splice(N.squares.indexOf(q), 1);
+      N.squares.splice(N.squares.indexOf(sqOf(t.dataset.sq)) + (rightOf(t, e) ? 1 : 0), 0, q);
+      nsave();
+      return renderNotes();
+    }
+    const t = dragId && dropTarget(e), c = cardOf(dragId);
+    if (!t) return;
+    e.preventDefault();
+    if (t.dataset.id) {
+      N.cards.splice(N.cards.indexOf(c), 1);
+      N.cards.splice(N.cards.indexOf(cardOf(t.dataset.id)) + (below(t, e) ? 1 : 0), 0, c);
+      nsave();
+      renderList();
+    } else if (t.dataset.tab) moveCard(c, t.dataset.tab);
+    else {
+      c.sq = t.dataset.sq;
+      nsave();
+      renderNotes();
+      toast(`Moved to ${sqOf(c.sq).code}`);
+    }
+  });
+  notesEl.addEventListener('dragend', () => {
+    dragId = dragSq = '';
+    clearDrop();
+    const el = nList.querySelector('.dragging');
+    if (el) el.classList.remove('dragging');
+  });
+
+  function toggleNotes(open = !body.classList.contains('notes-open')) {
+    body.classList.toggle('notes-open', open);
+    if (open) { body.classList.remove('panel-open'); renderNotes(); }
+    wake();
+  }
+
+  function capture() {
+    capIn.value = '';
+    capEl.classList.add('show');
+    capIn.focus();
+  }
+  capIn.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    const text = capIn.value.trim();
+    if (text) {
+      N.cards.unshift({ id: uid(), sq: '', tab: 'ideas', title: '', body: text });
+      nsave();
+      if (body.classList.contains('notes-open')) renderNotes();
+      toast('Kept in ANY · Ideas');
+    }
+    capIn.blur();
+  });
+  capIn.addEventListener('blur', () => capEl.classList.remove('show'));
+
+  // ---------- right click ----------
+  const radial = $('radial'), rToggle = $('rToggle');
+  function openRadial(x, y) {
+    const r = 113;  // half the pie + a little room
+    radial.style.left = Math.min(innerWidth - r, Math.max(r, x)) + 'px';
+    radial.style.top = Math.min(innerHeight - r, Math.max(r, y)) + 'px';
+    rToggle.textContent = st.running ? 'Pause' : 'Start';
+    radial.classList.toggle('with-pin', inPinTime());
+    radial.classList.add('show');
+  }
+  function closeRadial() { radial.classList.remove('show'); }
+  radial.addEventListener('click', closeRadial);
+  addEventListener('blur', closeRadial);
+
+  // on the clock: the pie menu; on a square: its editor; elsewhere in notes / settings: same as a left click
+  document.addEventListener('contextmenu', (e) => {
+    const t = e.target;
+    if (t.closest('#radial')) return e.preventDefault();
+    // text fields keep the browser menu, for copy and paste
+    if (t.closest('input:not([type="radio"]):not([type="checkbox"]):not([type="range"]), textarea, select')) return;
+    e.preventDefault();
+    if (!t.closest('#notes, #panel')) return openRadial(e.clientX, e.clientY);
+    const sq = t.closest('[data-sq]');
+    if (sq && sq.dataset.sq !== 'all') return editSquare(sq.dataset.sq);
+    t.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY }));
+  });
+
+  // Esc steps back one layer at a time: pie menu, settings, square editor, open card, then notes
+  function onEscape() {
+    if (radial.classList.contains('show')) closeRadial();
+    else if (body.classList.contains('panel-open')) togglePanel(false);
+    else if (!body.classList.contains('notes-open')) return;
+    else if (nv.edit) { nv.edit = ''; renderEdit(); }
+    else if (nv.open) { nv.open = ''; renderList(); }
+    else toggleNotes(false);
+  }
+
+  // ---------- input ----------
+  let awakeT = 0;
+  function wake() {
+    body.classList.add('awake');
+    clearTimeout(awakeT);
+    awakeT = setTimeout(() => {
+      if (!body.classList.contains('panel-open') && !body.classList.contains('notes-open')) body.classList.remove('awake');
+    }, 2500);
+  }
+  addEventListener('mousemove', wake);
+  addEventListener('touchstart', wake, { passive: true });
+
+  const fullscreen = () => document.fullscreenElement
+    ? document.exitFullscreen()
+    : root.requestFullscreen().catch(() => {});
+
+  const ACTIONS = {
+    toggle, skip, restart: restartPhase, reset: resetAll, testNotify, auto: autoAction,
+    settings: () => togglePanel(), close: () => togglePanel(false), notes: () => toggleNotes(),
+    pin: openPin, pinSave: () => closePin(true), pinCancel: () => closePin(false), pinClose: closeShownPin,
+  };
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    b.blur();
+    ACTIONS[b.dataset.act]();
+  });
+
+  addEventListener('keydown', (e) => {
+    if (e.target.closest('input, select, textarea')) {
+      if (e.key === 'Escape') e.target.blur();
+      if (e.target.type !== 'radio' && e.target.type !== 'checkbox') return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    else if (k === 's') skip();
+    else if (k === 'r') e.shiftKey ? resetAll() : restartPhase();
+    else if (k === 'f') fullscreen();
+    else if (k === ',') togglePanel();
+    else if (k === 'n') toggleNotes();
+    else if (k === 'i') { e.preventDefault(); capture(); }
+    else if (k === 'escape') onEscape();
+  });
+
+  document.addEventListener('visibilitychange', () => render(true));
+
+  // ---------- boot ----------
+  st.total = st.remaining = mins('focus');
+  // an auto start whose time passed while the page was closed is dropped, not fired late
+  if (s.autoAt && s.autoAt <= now()) { s.autoAt = 0; save(); }
+  renderAuto();
+  renderPin();
+  wasPinTime = inPinTime();  // a reload inside pin time keeps what is showing
+  applySettings();
+  wake();
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>
