@@ -299,6 +299,10 @@
   }
   .nadd::placeholder { color: var(--muted); }
   .nadd:focus { border-style: solid; border-color: color-mix(in srgb, var(--sc) 50%, var(--line)); background: var(--card); }
+  .naddw { position: relative; }
+  .naddw .nadd { padding-right: 44px; }
+  .ntail { position: absolute; right: 4px; bottom: 4px; width: 32px; height: 32px; color: var(--sc); }
+  .ntail:hover { color: var(--sc); background: color-mix(in srgb, var(--sc) 14%, transparent); }
 
   .nlist { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 0 -6px; padding: 4px 6px 12px; }
   .ncard {
@@ -329,11 +333,20 @@
   .nacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
   .nacts .push { margin-left: auto; }
   .nacts select { font: inherit; font-size: 12px; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; cursor: pointer; }
-  .icon-btn.fold { flex: none; width: 28px; height: 28px; }
   .text-btn.sure { color: #c47b6b; border-color: currentColor; }
   .nacts .where { margin-right: auto; }
   .ibtn { flex: none; display: inline-flex; align-items: center; gap: 5px; }
   .ibtn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* every icon-only button in Notes uses the add-to-end button's box, 4px in from the right edge, so the right column lines up */
+  #notes header .icon-btn, .icon-btn.fold, .ncard:not(.open) .ibtn:not(.sure) {
+    flex: none; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px;
+  }
+  .ncard:not(.open) .ibtn:not(.sure):hover { color: var(--fg); background: var(--track); }
+  .ncard:not(.open) .ibtn svg { width: 18px; height: 18px; stroke-width: 1.6; }
+  #notes header .icon-btn { margin-right: 4px; }
+  .ncard:not(.open) { padding: 4px 3px 4px 12px; }
+  .nhead { margin-right: -9px; }
   .nsec { margin: 10px 4px 2px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
   .nsec:first-child { margin-top: 0; }
   .nsec span { margin-left: 6px; font-weight: 400; opacity: .7; }
@@ -471,7 +484,10 @@
     <div class="sqs" id="nSquares"></div>
     <div id="nEdit"></div>
     <nav class="ntabs" id="nTabs"></nav>
-    <textarea class="nadd" id="nAdd" rows="1" maxlength="2000"></textarea>
+    <div class="naddw" id="nAddW">
+      <textarea class="nadd" id="nAdd" rows="1" maxlength="2000"></textarea>
+      <button type="button" class="icon-btn ntail" data-n="tail" title="Add to the end of the list"><svg viewBox="0 0 24 24"><path d="M18 5v13H6V6M3 9l3-3 3 3"/></svg></button>
+    </div>
     <div class="nlist" id="nList"></div>
   </aside>
 
@@ -1104,8 +1120,8 @@
   }
 
   // ---------- notes ----------
-  const [notesEl, nSearch, nSquares, nEdit, nTabs, nAdd, nList, capEl, capIn] =
-    ['notes', 'nSearch', 'nSquares', 'nEdit', 'nTabs', 'nAdd', 'nList', 'capture', 'capIn'].map($);
+  const [notesEl, nSearch, nSquares, nEdit, nTabs, nAdd, nAddW, nList, capEl, capIn] =
+    ['notes', 'nSearch', 'nSquares', 'nEdit', 'nTabs', 'nAdd', 'nAddW', 'nList', 'capture', 'capIn'].map($);
   const NKEY = 'softclock.notes';
   const TAB = { doing: 'Doing', todo: 'Todo', ideas: 'Ideas', archive: 'Archive' };
   const EMPTY = { doing: 'Nothing on the go', todo: 'All clear for now', ideas: 'Ideas will gather here', archive: 'Nothing archived yet' };
@@ -1152,6 +1168,12 @@
     return nv.tab === 'archive' ? list.sort((a, b) => b.at - a.at) : list;
   }
 
+  // an empty note (no title, no details) gets Delete instead of Archive, and is deleted without asking
+  const blank = (c) => !(c.title || '').trim() && !(c.body || '').trim();
+  const endBtn = (c) => blank(c)
+    ? '<button type="button" class="text-btn push" data-n="del">Delete</button>'
+    : '<button type="button" class="text-btn push" data-n="archive">Archive</button>';
+
   function cardHtml(c) {
     const q = sqOf(c.sq);
     const grip = nv.q || c.tab === 'archive' ? '' : `<span class="grip" draggable="true" title="Drag to reorder">${GRIP}</span>`;
@@ -1166,13 +1188,15 @@
       // folded: the title if there is one, else the first line of the details, in the same plain style; cut with … when too long
       const text = esc(c.title || firstLine(c.body) || 'Empty note');
       const meta = nv.q ? TAB[c.tab] : when;
-      return `<div class="ncard" data-id="${c.id}">${grip}${mini}<span class="prev">${text}</span>${meta ? `<span class="where">${meta}</span>` : ''}${c.tab === 'archive' ? archBtns(false) : `<button type="button" class="text-btn ibtn" data-n="archive" title="Archive">${IC_ARCHIVE}</button>`}</div>`;
+      return `<div class="ncard" data-id="${c.id}">${grip}${mini}<span class="prev">${text}</span>${meta ? `<span class="where">${meta}</span>` : ''}${c.tab === 'archive' ? archBtns(false)
+        : blank(c) ? `<button type="button" class="text-btn ibtn" data-n="del" title="Delete">${IC_DELETE}</button>`
+        : `<button type="button" class="text-btn ibtn" data-n="archive" title="Archive">${IC_ARCHIVE}</button>`}</div>`;
     }
     const acts = c.tab === 'archive'
       ? `<span class="where">${when}</span>${archBtns(true)}`
       : ['doing', 'todo', 'ideas'].filter((k) => k !== c.tab).map((k) => `<button type="button" class="text-btn" data-n="move" data-to="${k}">→ ${TAB[k]}</button>`).join('')
         + `<select class="nsq" title="Move to another square"><option value="">ANY</option>${squares().map((o) => `<option value="${o.id}"${o.id === c.sq ? ' selected' : ''}>${esc(o.code)}</option>`).join('')}</select>`
-        + '<button type="button" class="text-btn push" data-n="archive">Archive</button>';
+        + endBtn(c);
     return `<div class="ncard open" data-id="${c.id}">
       <div class="nhead">${grip}${mini}<input class="ntitle" placeholder="Title" maxlength="120" value="${esc(c.title)}"><button type="button" class="icon-btn fold" data-n="fold" title="Fold (Esc)"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>
       <textarea class="ntext" placeholder="Details" rows="2">${esc(c.body)}</textarea>
@@ -1194,7 +1218,7 @@
       const n = count(k, nv.sq);
       return `<button type="button" class="ntab${k === nv.tab ? ' sel' : ''}" data-tab="${k}">${w}${n ? `<span>${n}</span>` : ''}</button>`;
     }).join('');
-    nAdd.hidden = !!nv.q || nv.tab === 'archive';
+    nAddW.hidden = !!nv.q || nv.tab === 'archive';
     nAdd.placeholder = `Write here · goes to ${cur ? cur.code : 'ANY'} · ${TAB[nv.tab]}`;
     renderList();
   }
@@ -1296,14 +1320,22 @@
     const el = nList.querySelector('.ncard.open');
     if (el) el.scrollIntoView({ block: 'nearest' });
   }
-  function addCard() {
+  // Enter adds to the top; the tail button adds to the end
+  function addCard(tail) {
     const text = nAdd.value.trim();
     if (!text) return;
-    N.cards.unshift({ id: uid(), sq: nv.sq === 'all' ? '' : nv.sq, tab: nv.tab, title: '', body: text });
+    const c = { id: uid(), sq: nv.sq === 'all' ? '' : nv.sq, tab: nv.tab, title: '', body: text };
+    if (tail) N.cards.push(c); else N.cards.unshift(c);
     nAdd.value = '';
     nAdd.style.height = '';
     nsave();
+    if (tail && visible().length > LIMIT) nv.more = true;
     renderNotes();
+    if (tail) {
+      const el = nList.querySelector(`.ncard[data-id="${c.id}"]`);
+      if (el) el.scrollIntoView({ block: 'nearest' });
+      nAdd.focus();
+    }
   }
 
   // two-step archive / delete: first click asks, second click does it; clicking anywhere else puts it back
@@ -1323,6 +1355,7 @@
   }
 
   const NACT = {
+    tail() { addCard(true); },
     newSq() { Object.assign(nv, { edit: 'new', color: COLORS[N.squares.length % COLORS.length] }); renderEdit(); },
     sqSave,
     sqCancel() { nv.edit = ''; renderEdit(); },
@@ -1341,7 +1374,7 @@
       toast(`Back in ${TAB[c.tab]}`);
     },
     del(c, b) {
-      if (!sure(b)) return;
+      if (!blank(c) && !sure(b)) return;
       N.cards.splice(N.cards.indexOf(c), 1);
       nv.open = '';
       nsave();
@@ -1350,8 +1383,15 @@
   };
 
   // where the press began decides folding, so selecting text inside the card and letting go outside keeps it open
-  let downInOpen = false, downInNotes = false;
+  let downInOpen = false, downInNotes = false, eatClick = false;
   document.addEventListener('pointerdown', (e) => {
+    eatClick = false;
+    // with the pie menu up, a left click outside it only closes the pie; notes, settings and cards stay as they are
+    if (e.button === 0 && radial.classList.contains('show') && !e.target.closest('#radial')) {
+      closeRadial();
+      eatClick = true;
+      return;
+    }
     downInOpen = !!e.target.closest('.ncard.open');
     downInNotes = !!e.target.closest('#notes');
     unsure(e.target.closest('.sure'));
@@ -1363,6 +1403,12 @@
         if (nv.open) { nv.open = ''; renderList(); } else toggleNotes(false);
       }
     }
+  }, true);
+  addEventListener('click', (e) => {
+    if (!eatClick) return;
+    eatClick = false;
+    e.preventDefault();
+    e.stopPropagation();
   }, true);
   // a click outside the open card folds it
   document.addEventListener('click', (e) => {
@@ -1395,6 +1441,9 @@
     if (!c) return;
     if (t.classList.contains('ntitle')) c.title = t.value;
     else if (t.classList.contains('ntext')) { c.body = t.value; fit(t); }
+    // swap Archive / Delete as the note turns empty or not while typing
+    const p = el.querySelector('.nacts .push');
+    if (p && p.dataset.n !== (blank(c) ? 'del' : 'archive')) p.outerHTML = endBtn(c);
     nsave();
   });
 
@@ -1411,9 +1460,14 @@
   notesEl.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing) return;
     const t = e.target;
-    // add box: Enter adds, Shift+Enter starts a new line
+    // add box: Enter adds, Shift+Enter starts a new line; Enter with nothing written (or only blank lines) just leaves the box
     if (t === nAdd) {
-      if (!e.shiftKey) { e.preventDefault(); addCard(); }
+      if (e.shiftKey) return;
+      e.preventDefault();
+      if (nAdd.value.trim()) return addCard();
+      nAdd.value = '';
+      nAdd.style.height = '';
+      nAdd.blur();
       return;
     }
     if (t.classList.contains('sqcode')) return sqSave();
